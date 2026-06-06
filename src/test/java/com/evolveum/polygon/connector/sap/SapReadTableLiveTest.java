@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -107,6 +108,41 @@ public class SapReadTableLiveTest {
             // null filter = find all; the smoke test only asserts it runs without error
             connector.executeQuery(new ObjectClass(alias), null, handler, new OperationOptionsBuilder().build());
             LOG.info("table {0} (alias {1}): read {2} row(s)", tableName, alias, results.size());
+        }
+    }
+
+    /**
+     * Verifies the find-by-key path (RFC_READ_TABLE OPTIONS on the key column): discover a real key
+     * via find-all, then look it up and expect exactly that one row. This is the data-independent
+     * counterpart to TestClient.testFindOneActivityGroups, which hard-codes a role name.
+     */
+    @Test
+    public void searchByKeyReturnsExactlyTheRequestedRow() {
+        assumeTrue(available, CONFIG_FILE + " not found - skipping live SAP test");
+        for (String tableName : configuration.getTableAliases().keySet()) {
+            String alias = configuration.getTableAliases().get(tableName);
+            ObjectClass objectClass = new ObjectClass(alias);
+
+            List<ConnectorObject> first = new ArrayList<>();
+            connector.executeQuery(objectClass, null, co -> {
+                first.add(co);
+                return false; // only need the first row
+            }, new OperationOptionsBuilder().build());
+            if (first.isEmpty()) {
+                LOG.info("table {0} (alias {1}): no rows, skipping find-by-key check", tableName, alias);
+                continue;
+            }
+
+            String uid = first.get(0).getUid().getUidValue();
+            List<ConnectorObject> byKey = new ArrayList<>();
+            connector.executeQuery(objectClass, new SapFilter(uid), co -> {
+                byKey.add(co);
+                return true;
+            }, new OperationOptionsBuilder().build());
+
+            assertEquals(1, byKey.size(), "find-by-key for '" + uid + "' on " + alias + " must return exactly one row");
+            assertEquals(uid, byKey.get(0).getUid().getUidValue());
+            LOG.info("table {0} (alias {1}): find-by-key '{2}' returned exactly one row", tableName, alias, uid);
         }
     }
 
