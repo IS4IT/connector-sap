@@ -51,6 +51,11 @@ tableParameterNames=PROFILES;ACTIVITYGROUPS;GROUPS
 # rejects the default. The update and change-password tests append a single digit ("...1"/"...2"),
 # so the value must remain policy-compliant with one extra character.
 #test.password=Test1234
+# User parameter used by testSetXmlParameter/testDeleteParameter. Default SCL (upper/lower case in
+# source code), which SAP assigns to new users by default. Set these if SCL is not present on your
+# system. (PARAMETER1 and ADDTEL are added to the read-back schema automatically for these tests.)
+#test.parameterId=SCL
+#test.parameterValue=X
 
 # --- test objects (all optional) ---
 # TestClient no longer hard-codes SAP objects. Each test object is resolved as:

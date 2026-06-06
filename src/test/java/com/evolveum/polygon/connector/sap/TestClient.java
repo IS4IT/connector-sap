@@ -64,6 +64,8 @@ public class TestClient {
     static String testUser;        // an existing account used by read/filter tests (e.g. DDIC)
     static String testPassword;    // base password for created test users (test.password); the update
                                    // and change-password tests append a digit so it must stay policy-compliant
+    static String testParameterId;     // a user parameter id for the parameter tests (test.parameterId, default SCL)
+    static String testParameterValue;  // its value (test.parameterValue, default X)
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -81,6 +83,19 @@ public class TestClient {
         USER_NAME = (userPrefix != null ? userPrefix : "Evol-") + "1";
         String configuredPassword = property("test.password");
         testPassword = configuredPassword != null ? configuredPassword : "Test1234";
+        testParameterId = property("test.parameterId") != null ? property("test.parameterId") : "SCL";
+        testParameterValue = property("test.parameterValue") != null ? property("test.parameterValue") : "X";
+
+        // make sure the user-parameter and telephone tests have their tables in the account schema/read-back
+        LinkedHashSet<String> tableParams = new LinkedHashSet<>();
+        for (String p : sapConfiguration.getTableParameterNames()) {
+            if (p != null && !p.trim().isEmpty()) {
+                tableParams.add(p.trim());
+            }
+        }
+        tableParams.add("PARAMETER1");
+        tableParams.add("ADDTEL");
+        sapConfiguration.setTableParameterNames(tableParams.toArray(new String[0]));
 
         sapConnector = new SapConnector();
         sapConnector.init(sapConfiguration);
@@ -195,6 +210,18 @@ public class TestClient {
         if (value == null) {
             throw new SkipException("no " + description + " available on the test system (configure it in test.properties)");
         }
+    }
+
+    private static boolean containsValue(Attribute attribute, String needle) {
+        if (attribute == null || attribute.getValue() == null) {
+            return false;
+        }
+        for (Object value : attribute.getValue()) {
+            if (value != null && value.toString().contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Builds a login configuration reusing the test.properties connection, for the given user/password. */
@@ -1265,7 +1292,10 @@ public class TestClient {
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, USER_NAME));
 
-        String parameter = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><item><PARID>BCS_ADMIN_TREE</PARID><PARVA/><PARTXT>BCS Admin: Width of the Navigation Tree</PARTXT></item>";
+        // a user parameter that exists on the system (default SCL, which SAP assigns by default);
+        // configurable via test.parameterId / test.parameterValue
+        String parameter = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><item><PARID>"
+                + testParameterId + "</PARID><PARVA>" + testParameterValue + "</PARVA></item>";
         String attribute = "PARAMETER1"; // PARAMETER
         attributes.add(AttributeBuilder.build(attribute, parameter));
 
@@ -1290,10 +1320,9 @@ public class TestClient {
         // check attribute values
         ConnectorObject user = found[0];
         Attribute parameterAttr = user.getAttributeByName(attribute);
-        if (parameterAttr == null || parameterAttr.getValue().isEmpty()) {
-            throw new SkipException(attribute + " did not persist on this system");
-        }
-        LOG.info(attribute + ": {0}", parameterAttr.getValue());
+        LOG.info(attribute + ": {0}", parameterAttr == null ? null : parameterAttr.getValue());
+        Assert.assertTrue(containsValue(parameterAttr, testParameterId),
+                "parameter " + testParameterId + " not found in " + (parameterAttr == null ? null : parameterAttr.getValue()));
     }
 
     @Test(dependsOnMethods = {"testSetXmlParameter"})
@@ -1325,8 +1354,9 @@ public class TestClient {
 
         // check attribute values
         ConnectorObject user = found[0];
-        LOG.info(attribute + ": {0}", user.getAttributeByName(attribute).getValue());
-        Assert.assertEquals(user.getAttributeByName(attribute).getValue().size(), 0);
+        Attribute parameterAttr = user.getAttributeByName(attribute);
+        LOG.info(attribute + ": {0}", parameterAttr == null ? null : parameterAttr.getValue());
+        Assert.assertFalse(containsValue(parameterAttr, testParameterId), "parameter " + testParameterId + " was not removed");
     }
 
 
@@ -1361,10 +1391,9 @@ public class TestClient {
         // check attribute values
         ConnectorObject user = found[0];
         Attribute addtelAttr = user.getAttributeByName(attribute);
-        if (addtelAttr == null || addtelAttr.getValue().isEmpty()) {
-            throw new SkipException(attribute + " did not persist on this system");
-        }
-        LOG.info(attribute + ": {0}", addtelAttr.getValue());
+        LOG.info(attribute + ": {0}", addtelAttr == null ? null : addtelAttr.getValue());
+        Assert.assertTrue(addtelAttr != null && !addtelAttr.getValue().isEmpty(),
+                "telephone (" + attribute + ") was not stored/read back");
     }
 
     @Test(dependsOnMethods = {"testSetXmlAddtel"})
@@ -1396,8 +1425,9 @@ public class TestClient {
 
         // check attribute values
         ConnectorObject user = found[0];
-        LOG.info(attribute + ": {0}", user.getAttributeByName(attribute).getValue());
-        Assert.assertEquals(user.getAttributeByName(attribute).getValue().size(), 0);
+        Attribute addtelAttr = user.getAttributeByName(attribute);
+        LOG.info(attribute + ": {0}", addtelAttr == null ? null : addtelAttr.getValue());
+        Assert.assertTrue(addtelAttr == null || addtelAttr.getValue().isEmpty(), "telephone was not removed");
     }
 
     @Test//(dependsOnMethods = {"testCreateFull"})
