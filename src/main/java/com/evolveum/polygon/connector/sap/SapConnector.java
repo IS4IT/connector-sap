@@ -318,7 +318,11 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
         buildAccountObjectClass(builder);
 
-        buildTableObjectClasses(builder);
+        if (configuration.isReadTableMode()) {
+            buildReadTableObjectClasses(builder);
+        } else {
+            buildTableObjectClasses(builder);
+        }
 
         buildProfileObjectClass(builder);
 
@@ -412,6 +416,32 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                     attributeInfoBuilder.setMultiValued(true);
                     objClassBuilder.addAttributeInfo(attributeInfoBuilder.build());
                 }
+            }
+
+            builder.defineObjectClass(objClassBuilder.build());
+        }
+    }
+
+    private void buildReadTableObjectClasses(SchemaBuilder builder) {
+        for (String tableName : configuration.getTableAliases().keySet()) {
+            ObjectClassInfoBuilder objClassBuilder = new ObjectClassInfoBuilder();
+            objClassBuilder.setType(configuration.getTableAliases().get(tableName));
+
+            List<String> ignores = configuration.getTableIgnores().getOrDefault(tableName, Collections.emptyList());
+            try {
+                ReadTableStructure structure = loadTableStructure(tableName);
+                for (ReadTableStructure.Field field : structure.getFields()) {
+                    if ("MANDT".equals(field.getName()) || ignores.contains(field.getName())) {
+                        continue;
+                    }
+                    AttributeInfoBuilder attributeInfoBuilder = new AttributeInfoBuilder(field.getName());
+                    attributeInfoBuilder.setCreateable(false);
+                    attributeInfoBuilder.setUpdateable(false);
+                    objClassBuilder.addAttributeInfo(attributeInfoBuilder.build());
+                }
+            } catch (JCoException e) {
+                throw new ConnectorIOException("Error reading structure of table " + tableName + " via "
+                        + configuration.getTableReadFunction() + ": " + e.getMessage(), e);
             }
 
             builder.defineObjectClass(objClassBuilder.build());
@@ -550,10 +580,14 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             }
 
             if (found == null) {
-                throw new UnsupportedOperationException("Unsupported object class " + objectClass + ", expected: " + configuration.getTableMetadatas());
+                throw new UnsupportedOperationException("Unsupported object class " + objectClass + ", expected one of: " + configuration.getTableAliases().values());
             }
 
-            executeTableQuery(found, query, handler);
+            if (configuration.isReadTableMode()) {
+                executeReadTableQuery(found, query, handler);
+            } else {
+                executeTableQuery(found, query, handler);
+            }
         }
 
     }
@@ -729,6 +763,240 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             if("TABLE_EMPTY".equals(e.getKey()))
                 return;
             throw new ConnectorIOException(e.getMessage(), e);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // RFC_READ_TABLE / BBP_RFC_READ_TABLE code path (configuration.tableReadFunction != RFC_GET_TABLE_ENTRIES)
+    // ---------------------------------------------------------------------------------------------
+
+    private void executeReadTableQuery(String tableName, SapFilter query, ResultsHandler handler) {
+        boolean isFindByKey = query != null && query.getBasicByNameEquals() != null;
+        try {
+            List<String> keyColumns = resolveKeyColumns(tableName);
+            ReadTableStructure structure = loadTableStructure(tableName);
+            List<String> ignores = configuration.getTableIgnores().getOrDefault(tableName, Collections.emptyList());
+
+            // output = all columns except MANDT and :IGNORE columns, plus the key columns
+            List<String> outputFields = new ArrayList<>();
+            for (ReadTableStructure.Field field : structure.getFields()) {
+                String name = field.getName();
+                if ("MANDT".equals(name) || ignores.contains(name)) {
+                    continue;
+                }
+                outputFields.add(name);
+            }
+            for (String key : keyColumns) {
+                if (!outputFields.contains(key)) {
+                    outputFields.add(key);
+                }
+            }
+
+            String where = buildWhere(tableName, keyColumns, query);
+            List<Map<String, String>> rows = readTableData(tableName, outputFields, where);
+
+            ObjectClass objectClass = new ObjectClass(configuration.getTableAliases().get(tableName));
+            boolean shouldContinue = true;
+            int handledObjects = 0;
+            for (Map<String, String> row : rows) {
+                if (!shouldContinue) {
+                    break;
+                }
+
+                StringBuilder concatenatedKey = new StringBuilder();
+                for (String key : keyColumns) {
+                    if (concatenatedKey.length() != 0) {
+                        concatenatedKey.append(":");
+                    }
+                    concatenatedKey.append(row.getOrDefault(key, ""));
+                }
+                if (StringUtil.isEmpty(concatenatedKey.toString())) {
+                    LOG.warn("ignoring empty key for table {0}", tableName);
+                    continue;
+                }
+                // RFC_READ_TABLE filters exactly, but for composite keys we only filter server-side on a
+                // single key column, so re-check the concatenated key here as well.
+                if (isFindByKey && !concatenatedKey.toString().equalsIgnoreCase(query.getBasicByNameEquals())) {
+                    continue;
+                }
+
+                ConnectorObjectBuilder builder = new ConnectorObjectBuilder();
+                builder.setObjectClass(objectClass);
+                builder.setUid(concatenatedKey.toString());
+                builder.setName(concatenatedKey.toString());
+                for (Map.Entry<String, String> entry : row.entrySet()) {
+                    addAttr(builder, entry.getKey(), entry.getValue());
+                }
+
+                if (query != null && query.getInMemoryFilter() != null
+                        && !query.getInMemoryFilter().accept(builder.build())) {
+                    continue;
+                }
+
+                ConnectorObject build = builder.build();
+                LOG.ok("ConnectorObject: {0}", build);
+                shouldContinue = handler.handle(build);
+                handledObjects++;
+            }
+            LOG.ok("Finished reading {0} objects of {1} query results", handledObjects, rows.size());
+        } catch (JCoException e) {
+            if ("TABLE_EMPTY".equals(e.getKey())) {
+                return;
+            }
+            throw new ConnectorIOException(e.getMessage(), e);
+        }
+    }
+
+    private JCoFunction getReadTableFunction() throws JCoException {
+        String functionName = configuration.getTableReadFunction();
+        JCoFunction function = destination.getRepository().getFunction(functionName);
+        if (function == null) {
+            throw new RuntimeException(functionName + " not found in SAP.");
+        }
+        return function;
+    }
+
+    /** Reads the field layout of a table (all columns) without fetching any data (NO_DATA). */
+    private ReadTableStructure loadTableStructure(String tableName) throws JCoException {
+        JCoFunction function = getReadTableFunction();
+        function.getImportParameterList().setValue("QUERY_TABLE", tableName);
+        function.getImportParameterList().setValue("NO_DATA", "X");
+        function.execute(destination);
+        return new ReadTableStructure(function.getTableParameterList().getTable("FIELDS"));
+    }
+
+    /**
+     * Reads {@code outputFields} of {@code tableName}, optionally filtered by {@code whereClause}.
+     * Prefers the unlimited ET_DATA output and server-side sort when the system supports them, and
+     * falls back to the fixed-width DATA work area otherwise. Returns one column-&gt;value map per row.
+     */
+    private List<Map<String, String>> readTableData(String tableName, List<String> outputFields, String whereClause) throws JCoException {
+        JCoFunction function = getReadTableFunction();
+        JCoParameterList imports = function.getImportParameterList();
+        imports.setValue("QUERY_TABLE", tableName);
+
+        if (imports.getListMetaData().hasField("USE_ET_DATA_4_RETURN")) {
+            imports.setValue("USE_ET_DATA_4_RETURN", "X");
+        }
+        if (imports.getListMetaData().hasField("GET_SORTED")) {
+            imports.setValue("GET_SORTED", "X");
+        }
+
+        setOptions(function, whereClause);
+
+        JCoTable fieldsIn = function.getTableParameterList().getTable("FIELDS");
+        if (outputFields != null) {
+            for (String field : outputFields) {
+                fieldsIn.appendRow();
+                fieldsIn.setValue("FIELDNAME", field);
+            }
+        }
+
+        function.execute(destination);
+
+        ReadTableStructure structure = new ReadTableStructure(function.getTableParameterList().getTable("FIELDS"));
+
+        boolean useEtData = function.getExportParameterList() != null
+                && function.getExportParameterList().getListMetaData().hasField("ET_DATA");
+        JCoTable data = useEtData
+                ? function.getExportParameterList().getTable("ET_DATA")
+                : function.getTableParameterList().getTable("DATA");
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        if (data.getNumRows() > 0) {
+            data.firstRow();
+            do {
+                Map<String, String> row = new LinkedHashMap<>();
+                if (useEtData) {
+                    // ET_DATA: one record per row in field LINE, columns separated by 0x1E (record separator)
+                    String raw = data.getString("LINE");
+                    String[] values = raw.split("\\x1E", -1);
+                    List<ReadTableStructure.Field> fields = structure.getFields();
+                    for (int i = 0; i < fields.size(); i++) {
+                        row.put(fields.get(i).getName(), i < values.length ? values[i].trim() : "");
+                    }
+                } else {
+                    // legacy DATA: fixed-width image in field WA, sliced by the returned FIELDS offset/length
+                    String raw = data.getString("WA");
+                    for (ReadTableStructure.Field field : structure.getFields()) {
+                        int start = Math.min(field.getOffset(), raw.length());
+                        int end = Math.min(field.getOffset() + field.getLength(), raw.length());
+                        row.put(field.getName(), raw.substring(start, end).trim());
+                    }
+                }
+                rows.add(row);
+            } while (data.nextRow());
+        }
+        return rows;
+    }
+
+    private void setOptions(JCoFunction function, String whereClause) {
+        if (StringUtil.isBlank(whereClause)) {
+            return;
+        }
+        JCoTable options = function.getTableParameterList().getTable("OPTIONS");
+        // OPTIONS.TEXT is limited to 72 characters per row; break only at AND/OR boundaries so no
+        // expression, field name or value is split (AND/OR must be upper case).
+        for (String line : whereClause.replaceAll("[\\r\\n]+", " ").split("(?<=\\s(AND|OR)\\s)")) {
+            if (line.trim().isEmpty()) {
+                continue;
+            }
+            options.appendRow();
+            options.setValue("TEXT", line);
+        }
+    }
+
+    private String buildWhere(String tableName, List<String> keyColumns, SapFilter query) {
+        String configWhere = configuration.getTableWhere().get(tableName);
+        String filterWhere = null;
+        if (query != null && query.getBasicByNameEquals() != null && keyColumns.size() == 1) {
+            filterWhere = keyColumns.get(0) + " = '" + query.getBasicByNameEquals().replace("'", "''") + "'";
+        }
+        if (StringUtil.isBlank(configWhere)) {
+            return filterWhere;
+        }
+        if (filterWhere == null) {
+            return configWhere;
+        }
+        return "( " + configWhere + " ) AND ( " + filterWhere + " )";
+    }
+
+    /** Key columns: a {@code :KEY} override from the configuration, else the DDIC primary key (MANDT dropped). */
+    private List<String> resolveKeyColumns(String tableName) throws JCoException {
+        List<String> override = configuration.getTableKeys().get(tableName);
+        if (override != null && !override.isEmpty()) {
+            return override;
+        }
+        List<String> ddicKeys = readDdicKeys(tableName);
+        if (ddicKeys.isEmpty()) {
+            throw new ConfigurationException("Cannot determine key columns for table " + tableName
+                    + " from DDIC (DD03L). Please mark a key column with :KEY in the 'tables' configuration.");
+        }
+        return ddicKeys;
+    }
+
+    private List<String> readDdicKeys(String tableName) throws JCoException {
+        String where = "TABNAME = '" + tableName + "' AND KEYFLAG = 'X' AND AS4LOCAL = 'A'";
+        List<Map<String, String>> rows = readTableData("DD03L", Arrays.asList("FIELDNAME", "POSITION"), where);
+        rows.sort(Comparator.comparingInt(r -> parseIntSafe(r.get("POSITION"))));
+        List<String> keys = new ArrayList<>();
+        for (Map<String, String> row : rows) {
+            String fieldName = row.get("FIELDNAME");
+            if (fieldName == null || fieldName.isEmpty() || "MANDT".equals(fieldName)) {
+                continue;
+            }
+            if (!keys.contains(fieldName)) {
+                keys.add(fieldName);
+            }
+        }
+        return keys;
+    }
+
+    private static int parseIntSafe(String value) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (Exception e) {
+            return Integer.MAX_VALUE;
         }
     }
 
