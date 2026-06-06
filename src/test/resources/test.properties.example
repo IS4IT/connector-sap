@@ -1,0 +1,44 @@
+# Example connection settings for the live SAP tests (TestClient, SapReadTableLiveTest).
+#
+# Copy this file to "test.properties" in the same directory (src/test/resources) and fill in your
+# values. "test.properties" is git-ignored on purpose - it holds credentials and must NOT be committed.
+# When "test.properties" is absent, SapReadTableLiveTest is skipped automatically.
+
+# --- connection ---
+host=sap.example.com
+systemNumber=00
+# r3name maps to the connector's systemId
+r3name=NPL
+client=001
+user=MIDPOINT
+password=CHANGE_ME
+lang=EN
+
+# message-server / load balancing (optional, instead of host/systemNumber)
+#loadBalancing=true
+#logonGroup=PUBLIC
+#port=3600
+
+# SNC / certificate based logon (optional, avoids the plaintext password above)
+#sncMode=1
+#sncMyName=p:CN=MIDPOINT, O=EXAMPLE, C=DE
+#sncPartnerName=p:CN=NPL, O=EXAMPLE, C=DE
+#sncLibrary=/usr/sap/sapcryptolib/libsapcrypto.so
+#sncQoP=9
+
+# --- table reading (this is what the RFC_READ_TABLE feature exercises) ---
+# RFC_GET_TABLE_ENTRIES (default, legacy positional col:len:KEY syntax) or
+# RFC_READ_TABLE / BBP_RFC_READ_TABLE / a custom Z-FM with the same interface.
+tableReadFunction=RFC_READ_TABLE
+
+# Multiple table definitions are separated by ';' (it is a single property value).
+# In RFC_READ_TABLE mode the table name alone is enough; "as ALIAS" is optional, ":len" is ignored,
+# ":KEY" overrides the DDIC key, ":IGNORE" drops a column, and an optional trailing "WHERE <clause>"
+# is passed as OPTIONS. A WHERE clause must not contain ';'.
+tables=AGR_DEFINE as ACTIVITYGROUP;USGRP as GROUP
+
+# Example with a WHERE clause (single-role / non-composite roles only):
+#tables=AGR_DEFINE as ACTIVITYGROUP WHERE PARENT_AGR <> '';USGRP as GROUP
+
+# BAPI table parameters exposed as multi-valued account attributes (separated by ';').
+tableParameterNames=PROFILES;ACTIVITYGROUPS;GROUPS

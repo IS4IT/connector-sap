@@ -137,6 +137,9 @@ public class TestClient {
             String[] tableParameterNames = properties.getProperty("tableParameterNames").split(";");
             sapConfiguration.setTableParameterNames(tableParameterNames);
         }
+        if (properties.containsKey("tableReadFunction")) {
+            sapConfiguration.setTableReadFunction(properties.getProperty("tableReadFunction"));
+        }
 
 
         return sapConfiguration;
