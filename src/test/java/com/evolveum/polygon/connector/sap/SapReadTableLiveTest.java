@@ -20,27 +20,30 @@ import org.identityconnectors.common.logging.Log;
 import org.identityconnectors.framework.common.objects.ConnectorObject;
 import org.identityconnectors.framework.common.objects.ObjectClass;
 import org.identityconnectors.framework.common.objects.OperationOptionsBuilder;
-import org.identityconnectors.framework.common.objects.ResultsHandler;
 import org.identityconnectors.framework.common.objects.Schema;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 /**
- * Live smoke test for the RFC_READ_TABLE table-read path. It requires a real SAP system and is
- * driven by a {@code test.properties} file on the test classpath (see {@code test.properties.example}).
- * <p>
- * When {@code test.properties} is not present the whole test is skipped (via JUnit assumptions), so it
- * stays green in CI and for anyone without a SAP system. {@code test.properties} is git-ignored.
+ * Live test for the table-read paths. Runs the same schema / find-all / find-by-key assertions against
+ * BOTH implementations: the legacy RFC_GET_TABLE_ENTRIES (positional col:len:KEY config) and the
+ * RFC_READ_TABLE path (self-describing config). Requires a real SAP system, driven by a
+ * {@code test.properties} on the test classpath (see {@code test.properties.example}); when that file is
+ * absent the whole test is skipped (JUnit assumptions), so it stays green without a SAP system.
  */
 public class SapReadTableLiveTest {
 
@@ -49,100 +52,100 @@ public class SapReadTableLiveTest {
     private static final String CONFIG_FILE = "test.properties";
     private static final int MAX_ROWS = 10;
 
-    private static SapConfiguration configuration;
-    private static SapConnector connector;
-    private static boolean available;
+    private static Properties props;
 
-    @BeforeAll
-    static void setUp() throws Exception {
-        Properties props = load(CONFIG_FILE);
-        if (props == null) {
-            LOG.info("{0} not found on the test classpath - skipping live SAP test", CONFIG_FILE);
-            available = false;
-            return;
-        }
-        configuration = buildConfiguration(props);
-        connector = new SapConnector();
-        // init() validates the configuration, opens the destination and builds the schema
-        connector.init(configuration);
-        available = true;
+    /** The two table-read implementations, each with table definitions in the form it expects. */
+    static Stream<Arguments> tableReadModes() {
+        return Stream.of(
+                arguments("RFC_GET_TABLE_ENTRIES",
+                        "AGR_DEFINE as ACTIVITYGROUP=MANDT:3:IGNORE,AGR_NAME:30:KEY,PARENT_AGR:30"
+                                + ";USGRP as GROUP=MANDT:3:IGNORE,USERGROUP:12:KEY"),
+                arguments("RFC_READ_TABLE",
+                        "AGR_DEFINE as ACTIVITYGROUP;USGRP as GROUP"));
     }
 
-    @AfterAll
-    static void tearDown() {
-        if (connector != null) {
-            try {
-                connector.dispose();
-            } catch (Exception e) {
-                LOG.warn("connector.dispose() failed: {0}", e);
-            }
+    @BeforeAll
+    static void loadProps() throws Exception {
+        props = load(CONFIG_FILE);
+        if (props == null) {
+            LOG.info("{0} not found on the test classpath - live SAP tests will be skipped", CONFIG_FILE);
         }
     }
 
     @Test
     public void testConnection() {
-        assumeTrue(available, CONFIG_FILE + " not found - skipping live SAP test");
-        connector.test();
-    }
-
-    @Test
-    public void schemaContainsConfiguredTableObjectClasses() {
-        assumeTrue(available, CONFIG_FILE + " not found - skipping live SAP test");
-        Schema schema = connector.schema();
-        for (String alias : configuration.getTableAliases().values()) {
-            assertNotNull(schema.findObjectClassInfo(alias),
-                    "schema is missing object class for configured table alias '" + alias + "'");
-        }
-    }
-
-    @Test
-    public void searchReadsRowsForEachConfiguredTable() {
-        assumeTrue(available, CONFIG_FILE + " not found - skipping live SAP test");
-        for (String tableName : configuration.getTableAliases().keySet()) {
-            String alias = configuration.getTableAliases().get(tableName);
-            List<ConnectorObject> results = new ArrayList<>();
-            ResultsHandler handler = connectorObject -> {
-                results.add(connectorObject);
-                return results.size() < MAX_ROWS;
-            };
-            // null filter = find all; the smoke test only asserts it runs without error
-            connector.executeQuery(new ObjectClass(alias), null, handler, new OperationOptionsBuilder().build());
-            LOG.info("table {0} (alias {1}): read {2} row(s)", tableName, alias, results.size());
+        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
+        SapConnector connector = new SapConnector();
+        try {
+            connector.init(buildConfiguration(props));
+            connector.test();
+        } finally {
+            dispose(connector);
         }
     }
 
     /**
-     * Verifies the find-by-key path (RFC_READ_TABLE OPTIONS on the key column): discover a real key
-     * via find-all, then look it up and expect exactly that one row. This is the data-independent
-     * counterpart to TestClient.testFindOneActivityGroups, which hard-codes a role name.
+     * Schema, find-all and find-by-key against each table-read implementation. find-by-key discovers a
+     * real key via find-all and looks it up, expecting exactly that one row - the data-independent
+     * counterpart to TestClient.testFindOneActivityGroups.
      */
-    @Test
-    public void searchByKeyReturnsExactlyTheRequestedRow() {
-        assumeTrue(available, CONFIG_FILE + " not found - skipping live SAP test");
-        for (String tableName : configuration.getTableAliases().keySet()) {
-            String alias = configuration.getTableAliases().get(tableName);
-            ObjectClass objectClass = new ObjectClass(alias);
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("tableReadModes")
+    public void tableReadWorks(String tableReadFunction, String tables) {
+        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
 
-            List<ConnectorObject> first = new ArrayList<>();
-            connector.executeQuery(objectClass, null, co -> {
-                first.add(co);
-                return false; // only need the first row
-            }, new OperationOptionsBuilder().build());
-            if (first.isEmpty()) {
-                LOG.info("table {0} (alias {1}): no rows, skipping find-by-key check", tableName, alias);
-                continue;
+        SapConfiguration config = buildConfiguration(props);
+        config.setTableReadFunction(tableReadFunction);
+        config.setTables(tables.split(";"));
+
+        SapConnector connector = new SapConnector();
+        try {
+            connector.init(config);
+
+            Schema schema = connector.schema();
+            for (String alias : config.getTableAliases().values()) {
+                assertNotNull(schema.findObjectClassInfo(alias),
+                        tableReadFunction + ": schema is missing object class for table alias '" + alias + "'");
             }
 
-            String uid = first.get(0).getUid().getUidValue();
-            List<ConnectorObject> byKey = new ArrayList<>();
-            connector.executeQuery(objectClass, new SapFilter(uid), co -> {
-                byKey.add(co);
-                return true;
-            }, new OperationOptionsBuilder().build());
+            for (String tableName : config.getTableAliases().keySet()) {
+                String alias = config.getTableAliases().get(tableName);
+                ObjectClass objectClass = new ObjectClass(alias);
 
-            assertEquals(1, byKey.size(), "find-by-key for '" + uid + "' on " + alias + " must return exactly one row");
-            assertEquals(uid, byKey.get(0).getUid().getUidValue());
-            LOG.info("table {0} (alias {1}): find-by-key '{2}' returned exactly one row", tableName, alias, uid);
+                List<ConnectorObject> all = new ArrayList<>();
+                connector.executeQuery(objectClass, null, co -> {
+                    all.add(co);
+                    return all.size() < MAX_ROWS;
+                }, new OperationOptionsBuilder().build());
+                LOG.info("{0} / {1}: read {2} row(s)", tableReadFunction, alias, all.size());
+                if (all.isEmpty()) {
+                    LOG.info("{0} / {1}: no rows, skipping find-by-key check", tableReadFunction, alias);
+                    continue;
+                }
+
+                String uid = all.get(0).getUid().getUidValue();
+                List<ConnectorObject> byKey = new ArrayList<>();
+                connector.executeQuery(objectClass, new SapFilter(uid), co -> {
+                    byKey.add(co);
+                    return true;
+                }, new OperationOptionsBuilder().build());
+
+                assertEquals(1, byKey.size(),
+                        tableReadFunction + ": find-by-key '" + uid + "' on " + alias + " must return exactly one row");
+                assertEquals(uid, byKey.get(0).getUid().getUidValue(),
+                        tableReadFunction + ": find-by-key returned the wrong row");
+                LOG.info("{0} / {1}: find-by-key '{2}' returned exactly one row", tableReadFunction, alias, uid);
+            }
+        } finally {
+            dispose(connector);
+        }
+    }
+
+    private static void dispose(SapConnector connector) {
+        try {
+            connector.dispose();
+        } catch (Exception e) {
+            LOG.warn("connector.dispose() failed: {0}", e);
         }
     }
 
@@ -151,9 +154,9 @@ public class SapReadTableLiveTest {
             if (in == null) {
                 return null;
             }
-            Properties props = new Properties();
-            props.load(in);
-            return props;
+            Properties properties = new Properties();
+            properties.load(in);
+            return properties;
         }
     }
 
@@ -193,15 +196,6 @@ public class SapReadTableLiveTest {
         }
         if (p.containsKey("sncQoP")) {
             c.setSncQoP(p.getProperty("sncQoP"));
-        }
-        if (p.containsKey("tableReadFunction")) {
-            c.setTableReadFunction(p.getProperty("tableReadFunction"));
-        }
-        if (p.containsKey("tables")) {
-            c.setTables(p.getProperty("tables").split(";"));
-        }
-        if (p.containsKey("tableParameterNames")) {
-            c.setTableParameterNames(p.getProperty("tableParameterNames").split(";"));
         }
         return c;
     }
