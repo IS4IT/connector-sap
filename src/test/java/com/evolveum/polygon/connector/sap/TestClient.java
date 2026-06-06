@@ -189,6 +189,37 @@ public class TestClient {
         }
     }
 
+    /** Builds a login configuration reusing the test.properties connection, for the given user/password. */
+    private static SapConfiguration buildLoginConfig(String user, String password) {
+        SapConfiguration c = new SapConfiguration();
+        if (props.containsKey("loadBalancing")) {
+            c.setLoadBalancing(Boolean.parseBoolean(props.getProperty("loadBalancing")));
+        }
+        c.setHost(props.getProperty("host"));
+        if (props.containsKey("port")) {
+            c.setPort(props.getProperty("port"));
+        }
+        if (props.containsKey("logonGroup")) {
+            c.setLogonGroup(props.getProperty("logonGroup"));
+        }
+        c.setSystemId(props.getProperty("r3name"));
+        if (props.containsKey("systemNumber")) {
+            c.setSystemNumber(props.getProperty("systemNumber"));
+        }
+        c.setClient(props.getProperty("client"));
+        if (props.containsKey("lang")) {
+            c.setLang(props.getProperty("lang"));
+        }
+        c.setUser(user);
+        c.setPlainPassword(password);
+        // only verify authentication; the freshly created test user has no further authorizations,
+        // so skip the BAPI permission check and any table reads during init
+        c.setTestBapiFunctionPermission(false);
+        c.setTables(new String[0]);
+        c.setTableParameterNames(new String[0]);
+        return c;
+    }
+
     private static SapConfiguration readSapConfigurationFromFile(String fileName) throws IOException {
         final Properties properties = new Properties();
         InputStream inputStream = TestClient.class.getClassLoader().getResourceAsStream(fileName);
@@ -709,31 +740,29 @@ public class TestClient {
     }
 
     @Test(dependsOnMethods = {"testEnableUser"})
-    public void testChangePassword() throws IOException {
+    public void testChangePassword() {
+        // set a fresh password on the test user using the admin connection
+        String newPassword = "Tt" + (100000 + new Random().nextInt(900000));
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, USER_NAME));
-        String newPassword = "Test5678";
-        GuardedString password = new GuardedString(newPassword.toCharArray());
-        attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME, password));
+        attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME,
+                new GuardedString(newPassword.toCharArray())));
+        sapConnector.update(ACCOUNT_OBJECT_CLASS, new Uid(USER_NAME), attributes, null);
 
-        OperationOptions operationOptions = null;
-        sapConnector.update(ACCOUNT_OBJECT_CLASS, new Uid(USER_NAME), attributes, operationOptions);
-
-        String fileName = "testChangePass.properties";
-        if (TestClient.class.getClassLoader().getResourceAsStream(fileName) == null) {
-            throw new SkipException(fileName + " not found - skipping password-login verification");
-        }
-        SapConfiguration sapConf = null;
-        sapConf = readSapConfigurationFromFile(fileName);
-        SapConnector sapConn = new SapConnector();
+        // verify the new password by logging in as the test user, reusing the test.properties
+        // connection - no separate properties file needed
+        SapConnector loginConnector = new SapConnector();
         try {
-            sapConn.init(sapConf);
-            sapConn.test();
+            loginConnector.init(buildLoginConfig(USER_NAME, newPassword));
+            loginConnector.test();
         } catch (Exception e) {
-            // authentificated, but don't have privileges
+            // the password authenticated if the only remaining problem is a missing RFCPING
+            // authorization (the limited test user typically has no further RFC authorizations)
             if (!e.toString().contains("No RFC authorization for function module RFCPING")) {
                 throw e;
             }
+        } finally {
+            loginConnector.dispose();
         }
     }
 
