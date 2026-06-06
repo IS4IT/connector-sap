@@ -42,3 +42,33 @@ tables=AGR_DEFINE as ACTIVITYGROUP;USGRP as GROUP
 
 # BAPI table parameters exposed as multi-valued account attributes (separated by ';').
 tableParameterNames=PROFILES;ACTIVITYGROUPS;GROUPS
+
+# --- test objects (all optional) ---
+# TestClient no longer hard-codes SAP objects. Each test object is resolved as:
+#   value below  ->  a standard SAP object that exists  ->  the first object discovered on the system.
+# Leave them unset to let the tests adapt to whatever system they run against; set them to pin
+# specific objects. If none can be resolved, the dependent test is skipped (not failed).
+#
+# Roles have no universal standard, so they are discovered (e.g. SAP_CO_EASY_COST_PLANNING on a
+# fresh system). Profiles/groups/users fall back to SAP standards: S_A.SYSTEM, SUPER, DDIC.
+#test.role=
+#test.role2=
+#test.profile=          # standard fallback: S_A.SYSTEM (then SAP_ALL)
+#test.group=            # standard fallback: SUPER
+#test.filterProfile=    # standard fallback: SAP_ALL (superusers hold it -> deterministic filters)
+#test.user=             # an existing account; standard fallback: DDIC
+
+# Optional UCLASS license fields for testUpdateFull (system-specific; a license type must be active
+# on the system). Unset = not exercised. Set all four to test license handling.
+#test.update.licType=
+#test.update.sysid=
+#test.update.client=
+#test.update.bnameChargeable=
+
+# Legacy test objects (the values these tests used before they became configurable; kept for
+# reference - they exist on the original author's SAP system, not necessarily on yours):
+#   role:           ZBC_ADM_BENUTZERADMINISTRATOR, ZBC_ADM_ENTWICKLER_ANZEIGE, ZBC_ADM_BATCH_ADMIN,
+#                   SAPCRM_DEVELOPER, ZBC_WWK_ENDUSER, ZSR_ADM_IT
+#   profile:        B_ALE_ALL, B_ALE_GRP_AD, &_SAP_ALL_00, SAP_ALL
+#   group:          SUPER, BLS-AL
+#   UCLASS update:  licType=11, sysid=E01, client=200, bnameChargeable=BEK.MI
