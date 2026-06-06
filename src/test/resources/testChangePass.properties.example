@@ -1,0 +1,39 @@
+# Example for testChangePass.properties - used ONLY by TestClient.testChangePassword.
+#
+# That test changes the test user's password (to "Test5678", see TestClient.testChangePassword)
+# and then opens a SECOND connection using THIS file to verify the new password authenticates.
+# So this file is the *test user's* logon with the new password - not the admin logon.
+#
+# Copy this file to "testChangePass.properties" (same directory). It is git-ignored (credentials).
+# If it is absent, testChangePassword is skipped automatically.
+
+# --- same target system as test.properties ---
+host=sap.example.com
+systemNumber=00
+# r3name maps to the connector's systemId
+r3name=NPL
+client=100
+lang=EN
+
+# --- the TEST USER and the NEW password set by testChangePassword ---
+# user must match TestClient.USER_NAME (SAP upper-cases it: Evol-1 -> EVOL-1)
+user=EVOL-1
+# must match the newPassword in TestClient.testChangePassword
+password=Test5678
+
+# Only verify that authentication works, not the BAPI authorizations of the limited test user.
+testBapiFunctionPermission=false
+failWhenWarning=false
+
+# Keep connector init light: the freshly created test user normally has no authorization to read
+# tables (AGR_DEFINE / DD03L) or build the full schema. Empty lists avoid those reads on login.
+tables=
+tableParameterNames=
+
+# Notes:
+# - Keep changePasswordAtNextLogon=false (default) in test.properties so the new password is
+#   productive; otherwise the logon here would require an immediate password change and fail.
+# - The test tolerates a missing "RFC authorization for function module RFCPING" (authentication
+#   already succeeded at that point). Any other authorization error means the test user cannot
+#   initialize the connector - grant it minimal logon/RFC authorization, or leave this file absent
+#   to skip the test.
