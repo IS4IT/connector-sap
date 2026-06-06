@@ -43,6 +43,15 @@ tables=AGR_DEFINE as ACTIVITYGROUP;USGRP as GROUP
 # BAPI table parameters exposed as multi-valued account attributes (separated by ';').
 tableParameterNames=PROFILES;ACTIVITYGROUPS;GROUPS
 
+# --- test user / password (all optional) ---
+# Test user name prefix; the test user is <prefix>1 (default "Evol-" -> EVOL-1). Use this to match
+# a naming namespace allowed on your system.
+#test.userPrefix=Evol-
+# Base password for created test users (default "Test1234"). Set this if your SAP password policy
+# rejects the default. The update and change-password tests append a single digit ("...1"/"...2"),
+# so the value must remain policy-compliant with one extra character.
+#test.password=Test1234
+
 # --- test objects (all optional) ---
 # TestClient no longer hard-codes SAP objects. Each test object is resolved as:
 #   value below  ->  a standard SAP object that exists  ->  the first object discovered on the system.

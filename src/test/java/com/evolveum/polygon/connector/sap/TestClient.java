@@ -41,9 +41,9 @@ public class TestClient {
             "UCLASS.LIC_TYPE", "UCLASS.SYSID", "UCLASS.CLIENT", "UCLASS.BNAME_CHARGEABLE", "LOGONDATA.GLTGV"};
 
     /**
-     * test user name
+     * test user name; the prefix is configurable via test.userPrefix (default "Evol-")
      */
-    static final String USER_NAME = "Evol-1";
+    static String USER_NAME = "Evol-1";
 
     // Loaded test.properties, used to resolve configurable test objects.
     private static Properties props;
@@ -62,6 +62,8 @@ public class TestClient {
     static String testGroup;       // a user group (standard: SUPER)
     static String filterProfile;   // profile used in account filter tests (standard: SAP_ALL) - superusers hold it
     static String testUser;        // an existing account used by read/filter tests (e.g. DDIC)
+    static String testPassword;    // base password for created test users (test.password); the update
+                                   // and change-password tests append a digit so it must stay policy-compliant
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -73,6 +75,12 @@ public class TestClient {
     private static void setUp(String fileName) throws Exception {
         LOG.info("reading configuration from file: "+fileName);
         sapConfiguration = readSapConfigurationFromFile(fileName);
+
+        // configurable test user name and password (to satisfy SAP naming and password policies)
+        String userPrefix = property("test.userPrefix");
+        USER_NAME = (userPrefix != null ? userPrefix : "Evol-") + "1";
+        String configuredPassword = property("test.password");
+        testPassword = configuredPassword != null ? configuredPassword : "Test1234";
 
         sapConnector = new SapConnector();
         sapConnector.init(sapConfiguration);
@@ -434,7 +442,7 @@ public class TestClient {
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, userName));
         attributes.add(AttributeBuilder.build("ADDRESS.LASTNAME", "Evolveum")); // surname is mandatory on user creation
-        GuardedString password = new GuardedString("Test1234".toCharArray());
+        GuardedString password = new GuardedString(testPassword.toCharArray());
         attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME, password));
 
         OperationOptions operationOptions = null;
@@ -470,7 +478,7 @@ public class TestClient {
         requireTestObject(testRole, "role");
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, USER_NAME));
-        GuardedString password = new GuardedString("Test1234".toCharArray());
+        GuardedString password = new GuardedString(testPassword.toCharArray());
         attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME, password));
 
         String title = "Mr.";
@@ -584,7 +592,7 @@ public class TestClient {
         requireTestObject(testRole2, "role");
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, USER_NAME));
-        GuardedString password = new GuardedString("Test5678".toCharArray());
+        GuardedString password = new GuardedString((testPassword + "1").toCharArray());
         attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME, password));
 
         String title = "Mr.";
@@ -741,8 +749,9 @@ public class TestClient {
 
     @Test(dependsOnMethods = {"testEnableUser"})
     public void testChangePassword() {
-        // set a fresh password on the test user using the admin connection
-        String newPassword = "Tt" + (100000 + new Random().nextInt(900000));
+        // set a fresh password on the test user using the admin connection (derived from the base
+        // test password so it stays policy-compliant, but distinct from the create/update passwords)
+        String newPassword = testPassword + "2";
         Set<Attribute> attributes = new HashSet<Attribute>();
         attributes.add(AttributeBuilder.build(Name.NAME, USER_NAME));
         attributes.add(AttributeBuilder.build(OperationalAttributes.PASSWORD_NAME,
