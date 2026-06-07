@@ -2060,8 +2060,13 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 local.set(Calendar.MILLISECOND, 0); // we don't have milisecond precision from SAP in LASTMODIFIED
                 now = local.getTime();
             }
-            SyncToken syncToken = new SyncToken(now.getTime());
-            LOG.info("returning SyncToken: {0} ({1})", syncToken, now);
+            // Take the high-water mark one second BEFORE the server time. MODTIME has only second
+            // precision and the change comparison is strict (lastModification.after(token)), so a change
+            // happening in the same second as this token would otherwise be missed on the next poll. The
+            // one-second overlap only causes a few changes to be re-read, which is harmless (sync is idempotent).
+            long tokenMillis = now.getTime() - 1000L;
+            SyncToken syncToken = new SyncToken(tokenMillis);
+            LOG.info("returning SyncToken: {0} ({1}, server time {2})", syncToken, new Date(tokenMillis), now);
             return syncToken;
 
         } else {

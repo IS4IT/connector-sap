@@ -583,10 +583,10 @@ public class TestClient {
     }
 
     @Test(dependsOnMethods = {"testCreateFull"})
-    public void testSync() throws IOException, InterruptedException {
+    public void testSync() throws IOException {
         SyncToken syncToken = sapConnector.getLatestSyncToken(ACCOUNT_OBJECT_CLASS);
-        // the token (and SAP MODTIME) have second precision; make sure the change lands in a later second
-        Thread.sleep(1200);
+        // no sleep needed: getLatestSyncToken returns one second before the server time, so a change made
+        // right now (in the same second) is still strictly after the token
         // a guaranteed user-master (USR02) change so LASTMODIFIED advances; an address-only change does
         // not necessarily bump it, so change the valid-to (logon) date instead
         Calendar validTo = new GregorianCalendar();
