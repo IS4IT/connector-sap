@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 
@@ -153,6 +154,48 @@ public class SapResourceLiveTest {
             assertTrue(name.endsWith(":D:00000"),
                     "WHERE clause not applied: '" + name + "' is not the German (SPRAS=D) first line (LINE=00000)");
         }
+    }
+
+    /**
+     * The same SAP table must be usable for several object types. Maps AGR_DEFINE twice, with different
+     * WHERE clauses, and checks that both object classes are generated and that each applies its own
+     * filter independently (the narrower one is a strict subset of the broader one).
+     */
+    @Test
+    public void sameTableCanBackMultipleObjectTypes() throws Exception {
+        assumeTrue(rigAvailable, "midPoint test rig not available - skipping");
+
+        String oid = createTemplateBasedResource("zz-test-sap-multialias",
+                "AGR_DEFINE as AUDITROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR%'",
+                "AGR_DEFINE as AUDITADMINROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR_ADMIN%'");
+        testResource(oid);
+
+        // both object classes are generated from the same SAP table
+        Set<String> objectClasses = generatedObjectClasses(oid);
+        assertTrue(objectClasses.contains("CustomAUDITROLESObjectClass"),
+                "missing AUDITROLES object class: " + objectClasses);
+        assertTrue(objectClasses.contains("CustomAUDITADMINROLESObjectClass"),
+                "the same SAP table did not yield a second, independent object class: " + objectClasses);
+
+        List<String> auditRoles = searchObjectNames(oid, "ri:CustomAUDITROLESObjectClass");
+        List<String> auditAdmin = searchObjectNames(oid, "ri:CustomAUDITADMINROLESObjectClass");
+        LOG.info("same table AGR_DEFINE -> AUDITROLES={0}, AUDITADMINROLES={1}", auditRoles.size(), auditAdmin.size());
+
+        // each object type applies its own WHERE
+        assertFalse(auditRoles.isEmpty(), "expected SAP_AUDITOR* roles on the test system");
+        assertFalse(auditAdmin.isEmpty(), "expected SAP_AUDITOR_ADMIN* roles on the test system");
+        for (String name : auditRoles) {
+            assertTrue(name.startsWith("SAP_AUDITOR"), "AUDITROLES WHERE not applied: " + name);
+        }
+        for (String name : auditAdmin) {
+            assertTrue(name.startsWith("SAP_AUDITOR_ADMIN"), "AUDITADMINROLES WHERE not applied: " + name);
+        }
+        // the two filters are independent: the narrower object type is a strict subset of the broader one
+        assertTrue(new TreeSet<>(auditRoles).containsAll(auditAdmin),
+                "the narrower object type must be a subset of the broader one (both read AGR_DEFINE)");
+        assertTrue(auditRoles.size() > auditAdmin.size(),
+                "the two WHERE clauses on the same table must select different counts (got "
+                        + auditRoles.size() + " and " + auditAdmin.size() + ")");
     }
 
     // --- resource lifecycle helpers --------------------------------------------------------------
