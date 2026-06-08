@@ -198,6 +198,43 @@ public class SapResourceLiveTest {
                         + auditRoles.size() + " and " + auditAdmin.size() + ")");
     }
 
+    /**
+     * A sub-table must work in RFC_READ_TABLE mode: it joins related rows of another SAP table to each root
+     * object and exposes them as a multi-valued attribute. Here AGR_TEXTS is joined to a few roles on AGR_NAME
+     * (filtered to the German short-description line) and returned as the ShortDescription attribute.
+     */
+    @Test
+    public void subTableExposesRelatedRowsAsAttribute() throws Exception {
+        assumeTrue(rigAvailable, "midPoint test rig not available - skipping");
+
+        // a narrow root (a handful of roles) keeps the per-root sub-query count - and the test - small
+        String config =
+                "            <cfg:tables>"
+                        + xmlText("AGR_DEFINE as AUDITADMINROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR_ADMIN%'")
+                        + "</cfg:tables>\n"
+                + "            <cfg:subTables>"
+                        + xmlText("AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription="
+                                + "AGR_NAME:MATCH,SPRAS(\"D\"):IGNORE,LINE(\"00000\"):IGNORE,TEXT")
+                        + "</cfg:subTables>\n";
+        String oid = createResourceWithConfig("zz-test-sap-subtable", config);
+        testResource(oid);
+
+        // the sub-table is exposed as an attribute on the object class
+        assertTrue(generatedObjectClasses(oid).contains("CustomAUDITADMINROLESObjectClass"),
+                "missing AUDITADMINROLES object class");
+
+        List<String> roles = searchObjectNames(oid, "ri:CustomAUDITADMINROLESObjectClass");
+        List<String> descriptions = searchAttributeValues(oid, "ri:CustomAUDITADMINROLESObjectClass", "ShortDescription");
+        LOG.info("AUDITADMINROLES roles={0}, ShortDescriptions={1}", roles.size(), descriptions.size());
+
+        assertFalse(roles.isEmpty(), "expected at least one SAP_AUDITOR_ADMIN* role on the test system");
+        assertFalse(descriptions.isEmpty(),
+                "the AGR_TEXTS sub-table returned no ShortDescription - the join or filter did not match");
+        for (String description : descriptions) {
+            assertFalse(description.isBlank(), "ShortDescription from the sub-table should not be blank");
+        }
+    }
+
     // --- resource lifecycle helpers --------------------------------------------------------------
 
     /**
@@ -205,17 +242,22 @@ public class SapResourceLiveTest {
      * {@code tables} definitions. Returns the new OID and registers it for cleanup.
      */
     private String createTemplateBasedResource(String name, String... tablesDefs) throws Exception {
-        String oid = UUID.randomUUID().toString();
         StringBuilder cfg = new StringBuilder();
         for (String t : tablesDefs) {
             cfg.append("            <cfg:tables>").append(xmlText(t)).append("</cfg:tables>\n");
         }
+        return createResourceWithConfig(name, cfg.toString());
+    }
+
+    /** Creates a concrete resource inheriting the template, with the given raw {@code <cfg:...>} body. */
+    private String createResourceWithConfig(String name, String configProperties) throws Exception {
+        String oid = UUID.randomUUID().toString();
         String body = "<resource xmlns=\"" + NS_COMMON + "\" xmlns:c=\"" + NS_COMMON + "\" oid=\"" + oid + "\">\n"
                 + "    <name>" + xmlText(name + "-" + oid.substring(0, 8)) + "</name>\n"
                 + "    <super><resourceRef oid=\"" + templateOid + "\"/></super>\n"
                 + "    <connectorConfiguration xmlns:icfc=\"" + NS_ICFC + "\">\n"
                 + "        <icfc:configurationProperties xmlns:cfg=\"" + NS_CFG + "\">\n"
-                + cfg
+                + configProperties
                 + "        </icfc:configurationProperties>\n"
                 + "    </connectorConfiguration>\n"
                 + "</resource>\n";
@@ -246,8 +288,8 @@ public class SapResourceLiveTest {
         return result;
     }
 
-    /** Searches the resource for the given object class (live, on SAP) and returns the shadow names. */
-    private List<String> searchObjectNames(String resourceOid, String objectClassQName) throws Exception {
+    /** Searches the resource for the given object class (live, on SAP) and returns the parsed shadow list. */
+    private Document searchShadows(String resourceOid, String objectClassQName) throws Exception {
         String query = "<query xmlns=\"" + NS_QUERY + "\" xmlns:c=\"" + NS_COMMON + "\" xmlns:ri=\"" + NS_RI + "\">\n"
                 + "  <filter>\n"
                 + "    <and>\n"
@@ -258,12 +300,28 @@ public class SapResourceLiveTest {
                 + "</query>\n";
         HttpResponse<String> r = send("POST", "/shadows/search", query, "application/xml");
         assertEquals(200, r.statusCode(), "shadow search failed: HTTP " + r.statusCode() + " - " + r.body());
-        NodeList nameNodes = xpathNodes(parse(r.body()), "//*[local-name()='object']/*[local-name()='name']/text()");
-        List<String> names = new ArrayList<>();
-        for (int i = 0; i < nameNodes.getLength(); i++) {
-            names.add(nameNodes.item(i).getNodeValue());
+        return parse(r.body());
+    }
+
+    /** The shadow names returned by the object-class search. */
+    private List<String> searchObjectNames(String resourceOid, String objectClassQName) throws Exception {
+        return textNodes(searchShadows(resourceOid, objectClassQName),
+                "//*[local-name()='object']/*[local-name()='name']/text()");
+    }
+
+    /** Values of the given resource attribute (local name) across all shadows from the search. */
+    private List<String> searchAttributeValues(String resourceOid, String objectClassQName, String attribute) throws Exception {
+        return textNodes(searchShadows(resourceOid, objectClassQName),
+                "//*[local-name()='attributes']/*[local-name()='" + attribute + "']/text()");
+    }
+
+    private static List<String> textNodes(Document doc, String expr) throws Exception {
+        NodeList nodes = xpathNodes(doc, expr);
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            values.add(nodes.item(i).getNodeValue());
         }
-        return names;
+        return values;
     }
 
     // --- low-level REST + XML helpers ------------------------------------------------------------
