@@ -364,6 +364,7 @@ public class SapConfiguration extends AbstractConfiguration {
     }
 
     void parseTableDefinitions() {
+        clearTableMaps();
         // if empty, update length
         if (tables != null && tables.length == 1 && "".equals(tables[0])) {
             tables = new String[0];
@@ -438,7 +439,17 @@ public class SapConfiguration extends AbstractConfiguration {
         tableNames.put(alias, tableName);
     }
 
+    /** Resets the per-object-class table maps so parsing (hence validate()) can be repeated idempotently. */
+    private void clearTableMaps() {
+        tableNames.clear();
+        tableMetadatas.clear();
+        tableKeys.clear();
+        tableIgnores.clear();
+        tableWhere.clear();
+    }
+
     void parseSubTableDefinitions() {
+        subTablesMetadata.clear();
         if (subTables == null) {
             subTables = new String[0];
         }
@@ -461,6 +472,7 @@ public class SapConfiguration extends AbstractConfiguration {
      * drops a column. Legacy RFC_GET_TABLE_ENTRIES table lines are accepted unchanged.
      */
     void parseReadTableDefinitions() {
+        clearTableMaps();
         if (tables != null && tables.length == 1 && "".equals(tables[0])) {
             tables = new String[0];
         }

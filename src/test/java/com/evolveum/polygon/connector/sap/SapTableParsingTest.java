@@ -145,4 +145,45 @@ public class SapTableParsingTest {
                 () -> parse("AGR_DEFINE as ROLES", "USGRP as ROLES"),
                 "two definitions sharing one alias (object class) must be rejected");
     }
+
+    @Test
+    public void testParsingIsIdempotent() {
+        SapConfiguration config = parse(
+                "AGR_DEFINE as ACTIVITYGROUP",
+                "AGR_DEFINE as AUDITROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR%'");
+        // a second parse must rebuild from scratch, not accumulate / report a false duplicate
+        config.parseReadTableDefinitions();
+        assertEquals(new LinkedHashSet<>(Arrays.asList("ACTIVITYGROUP", "AUDITROLES")), config.getTableNames().keySet());
+        assertEquals("AGR_NAME LIKE 'SAP_AUDITOR%'", config.getTableWhere().get("AUDITROLES"));
+    }
+
+    /** A minimally valid configuration so {@link SapConfiguration#validate()} runs (it does no SAP call). */
+    private SapConfiguration validatable(String... tables) {
+        SapConfiguration config = new SapConfiguration();
+        config.setHost("sap.example.com");
+        config.setUser("MIDPOINT");
+        config.setPlainPassword("secret");
+        config.setClient("100");
+        config.setTableParameterNames(new String[0]);
+        config.setTableReadFunction(SapConfiguration.FN_READ_TABLE);
+        config.setTables(tables);
+        return config;
+    }
+
+    @Test
+    public void testValidateIsIdempotent() {
+        SapConfiguration config = validatable(
+                "AGR_DEFINE as ACTIVITYGROUP",
+                "AGR_DEFINE as AUDITROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR%'");
+        config.validate();
+        config.validate();   // the framework / midPoint may call validate() repeatedly - it must not throw
+        assertEquals(new LinkedHashSet<>(Arrays.asList("ACTIVITYGROUP", "AUDITROLES")), config.getTableNames().keySet());
+    }
+
+    @Test
+    public void testValidateRejectsDuplicateAlias() {
+        SapConfiguration config = validatable("AGR_DEFINE as ROLES", "USGRP as ROLES");
+        assertThrows(ConfigurationException.class, config::validate,
+                "validate() (config verify / test connection) must surface the duplicate alias to the GUI");
+    }
 }
