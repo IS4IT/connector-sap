@@ -14,11 +14,14 @@ public class SubTableMetadata {
     private String virtualColumnName;
     private Format format = SubTableMetadata.Format.XML;
     private final List<TableColumnDefinition> columns = new ArrayList<>();
+    private String where;
 
     private static final Pattern PATTERN_FOR = Pattern.compile(" for ([^ ]+)");
     private static final Pattern PATTERN_FORMAT = Pattern.compile(" format ([^ ]+)");
     private static final Pattern PATTERN_AS = Pattern.compile(" as ([^ ]+)");
     private static final Pattern PATTERN_NAME = Pattern.compile("^([^ ]+)");
+    /** the optional trailing " WHERE <clause>" (RFC_READ_TABLE mode only) */
+    private static final Pattern PATTERN_WHERE = Pattern.compile("(?i)\\s+WHERE\\s+");
 
     public enum Format {
         /**
@@ -53,6 +56,11 @@ public class SubTableMetadata {
         return format;
     }
 
+    /** Optional extra WHERE clause for the RFC_READ_TABLE sub-query (null in legacy mode). */
+    public String getWhere() {
+        return where;
+    }
+
     private int getTableWidth() {
         int width = 0;
         for (TableColumnDefinition c : columns) {
@@ -61,10 +69,20 @@ public class SubTableMetadata {
         return width;
     }
 
-    public static SubTableMetadata parseConfig(String config) {
+    public static SubTableMetadata parseConfig(String config, boolean readTableMode) {
         SubTableMetadata metadata = new SubTableMetadata();
+        String def = config.trim();
 
-        String[] definitionParts = config.split("=");
+        // RFC_READ_TABLE: split off an optional trailing WHERE first, so a '=' inside the clause is safe
+        if (readTableMode) {
+            Matcher whereMatcher = PATTERN_WHERE.matcher(def);
+            if (whereMatcher.find()) {
+                metadata.where = def.substring(whereMatcher.end()).trim();
+                def = def.substring(0, whereMatcher.start()).trim();
+            }
+        }
+
+        String[] definitionParts = def.split("=", 2);
         if (definitionParts.length != 2) {
             throw new ConfigurationException(
                     "Please use correct sub-table definition, for example: 'AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1(\"E\"):IGNORE,LINE:5(\"00000\"):IGNORE,TEXT:80', got: " +
@@ -81,7 +99,10 @@ public class SubTableMetadata {
         }
 
         for (String columnDefinition : allColumnsDef) {
-            metadata.columns.add(TableColumnDefinition.parseConfig(metadata.getTableWidth(), columnDefinition));
+            // RFC_READ_TABLE ignores the fixed-width :<size>; the legacy path needs it for the offsets
+            metadata.columns.add(readTableMode
+                    ? TableColumnDefinition.parseLenientConfig(columnDefinition)
+                    : TableColumnDefinition.parseConfig(metadata.getTableWidth(), columnDefinition));
         }
 
         return metadata;

@@ -446,6 +446,17 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                         + configuration.getTableReadFunction() + ": " + e.getMessage(), e);
             }
 
+            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().get(tableName);
+            if (subTables != null) {
+                for (SubTableMetadata subTable : subTables) {
+                    AttributeInfoBuilder attributeInfoBuilder = new AttributeInfoBuilder(subTable.getVirtualColumnName());
+                    attributeInfoBuilder.setCreateable(false);
+                    attributeInfoBuilder.setUpdateable(false);
+                    attributeInfoBuilder.setMultiValued(true);
+                    objClassBuilder.addAttributeInfo(attributeInfoBuilder.build());
+                }
+            }
+
             builder.defineObjectClass(objClassBuilder.build());
         }
     }
@@ -795,6 +806,16 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 }
             }
 
+            // sub-tables join on their MATCH columns, so make sure those are fetched on the root row
+            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().getOrDefault(tableName, Collections.emptyList());
+            for (SubTableMetadata subTable : subTables) {
+                for (TableColumnDefinition column : subTable.getColumns()) {
+                    if (column.getMode() == TableColumnDefinition.Mode.MATCH && !outputFields.contains(column.getColumnName())) {
+                        outputFields.add(column.getColumnName());
+                    }
+                }
+            }
+
             String where = buildWhere(alias, keyColumns, query);
             List<Map<String, String>> rows = readTableData(tableName, outputFields, where);
 
@@ -834,6 +855,19 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 if (query != null && query.getInMemoryFilter() != null
                         && !query.getInMemoryFilter().accept(builder.build())) {
                     continue;
+                }
+
+                for (SubTableMetadata subTable : subTables) {
+                    try {
+                        builder.addAttribute(subTable.getVirtualColumnName(), executeReadTableSubQuery(subTable, row));
+                    } catch (JCoException e) {
+                        if ("TABLE_EMPTY".equals(e.getKey())) {
+                            builder.addAttribute(subTable.getVirtualColumnName(), new ArrayList<>());
+                        } else {
+                            throw new ConnectorIOException(
+                                    "Error during sub-table query for " + subTable.getTableName() + ": " + e.getMessage(), e);
+                        }
+                    }
                 }
 
                 ConnectorObject build = builder.build();
@@ -1004,6 +1038,80 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         }
     }
 
+    /**
+     * RFC_READ_TABLE sub-query: for a single root row, fetch the related rows of {@code metadata.getTableName()}.
+     * MATCH columns become a WHERE join on the root row's value, ("value") filter constants and the optional
+     * trailing WHERE are ANDed on, and the OUTPUT columns are read back and formatted (XML/TSV) - one value per row.
+     */
+    private List<String> executeReadTableSubQuery(SubTableMetadata metadata, Map<String, String> rootValues) throws JCoException {
+        List<String> conditions = new ArrayList<>();
+        List<String> outputFields = new ArrayList<>();
+        for (TableColumnDefinition column : metadata.getColumns()) {
+            if (column.getMode() == TableColumnDefinition.Mode.MATCH) {
+                conditions.add(equalsCondition(column.getColumnName(), rootValues.getOrDefault(column.getColumnName(), "")));
+            } else if (column.getMode() == TableColumnDefinition.Mode.OUTPUT) {
+                outputFields.add(column.getColumnName());
+            }
+            if (column.getFilterConstant() != null) {
+                conditions.add(equalsCondition(column.getColumnName(), column.getFilterConstant()));
+            }
+        }
+        if (!StringUtil.isBlank(metadata.getWhere())) {
+            conditions.add("( " + metadata.getWhere() + " )");
+        }
+        String where = String.join(" AND ", conditions);
+
+        List<Map<String, String>> rows = readTableData(metadata.getTableName(), outputFields, where);
+
+        List<String> values = new ArrayList<>();
+        for (Map<String, String> row : rows) {
+            Map<String, String> outputs = new LinkedHashMap<>();
+            for (TableColumnDefinition column : metadata.getColumns()) {
+                if (column.getMode() == TableColumnDefinition.Mode.OUTPUT) {
+                    outputs.put(column.getColumnName(), row.getOrDefault(column.getColumnName(), ""));
+                }
+            }
+            values.add(formatSubRow(metadata.getFormat(), outputs));
+        }
+        return values;
+    }
+
+    private static String equalsCondition(String column, String value) {
+        return column + " = '" + value.replace("'", "''") + "'";
+    }
+
+    /** Formats one sub-table result row (its OUTPUT columns, in config order) as XML or TSV. */
+    private String formatSubRow(SubTableMetadata.Format format, Map<String, String> outputs) {
+        if (format == SubTableMetadata.Format.XML) {
+            try (StringWriter writer = new StringWriter()) {
+                if (xmlTransformer == null) {
+                    xmlTransformer = TransformerFactory.newInstance().newTransformer();
+                }
+                Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
+                Element root = document.createElement("item");
+                document.appendChild(root);
+                for (Map.Entry<String, String> entry : outputs.entrySet()) {
+                    Element item = document.createElement(entry.getKey());
+                    item.appendChild(document.createTextNode(entry.getValue()));
+                    root.appendChild(item);
+                }
+                xmlTransformer.transform(new DOMSource(document), new StreamResult(writer));
+                return writer.toString();
+            } catch (TransformerException | ParserConfigurationException | IOException e) {
+                throw new ConnectorIOException("Could not format row as XML: " + e.getMessage(), e);
+            }
+        }
+        // TSV
+        StringBuilder row = new StringBuilder();
+        for (String value : outputs.values()) {
+            if (row.length() != 0) {
+                row.append("\t");
+            }
+            row.append(value);
+        }
+        return row.toString();
+    }
+
     private List<String> executeTableSubQuery(String queryKey, SubTableMetadata metadata, Map<String, String> rootValues) throws JCoException {
         JCoFunction function = destination.getRepository().getFunction("RFC_GET_TABLE_ENTRIES");
         if (function == null) {
@@ -1059,37 +1167,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                     continue;
                 }
 
-                if (metadata.getFormat() == SubTableMetadata.Format.XML) {
-                    try (StringWriter writer = new StringWriter()) {
-                        if (xmlTransformer == null) {
-                            xmlTransformer = TransformerFactory.newInstance().newTransformer();
-                        }
-
-                        Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
-                        Element root = document.createElement("item");
-                        document.appendChild(root);
-
-                        for (Map.Entry<String, String> entry : columnValues.entrySet()) {
-                            Element item = document.createElement(entry.getKey());
-                            item.appendChild(document.createTextNode(entry.getValue()));
-                            root.appendChild(item);
-                        }
-                        xmlTransformer.transform(new DOMSource(document), new StreamResult(writer));
-                        values.add(writer.toString());
-                    } catch (TransformerException | ParserConfigurationException | IOException e) {
-                        throw new ConnectorIOException("Could not format row as XML: " + e.getMessage(), e);
-                    }
-
-                } else if (metadata.getFormat() == SubTableMetadata.Format.TSV) {
-                    StringBuilder row = new StringBuilder();
-                    for (Map.Entry<String, String> entry : columnValues.entrySet()) {
-                        if (!row.isEmpty()) {
-                            row.append("\t");
-                        }
-                        row.append(entry.getValue());
-                    }
-                    values.add(row.toString());
-                }
+                values.add(formatSubRow(metadata.getFormat(), columnValues));
 
             } while (entries.nextRow());
         }

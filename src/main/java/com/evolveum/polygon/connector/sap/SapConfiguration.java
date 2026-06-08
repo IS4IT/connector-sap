@@ -182,6 +182,19 @@ public class SapConfiguration extends AbstractConfiguration {
 
     /**
      * Defines additional tables, that should be queried for each table result.
+     * <br/>
+     * In RFC_READ_TABLE mode (see {@code tableReadFunction}) the same definitions are reused, but the
+     * fixed-width {@code :<size>} of each column is ignored (data is read by field name, not by offset),
+     * so you only need the MATCH and filter columns plus the OUTPUT columns; an optional trailing
+     * {@code WHERE <clause>} may be appended for extra filtering. The MATCH columns become a server-side
+     * join on the root row value and the {@code ("value")} filter constants become WHERE equalities, e.g.
+     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=AGR_NAME:MATCH,SPRAS("E"):IGNORE,LINE("00000"):IGNORE,TEXT}.
+     * <br/>
+     * Since a {@code ("value")} filter is just a static condition, you can equivalently write it in the
+     * trailing WHERE instead, in which case the filtered columns need not be listed at all - the example
+     * above is the same as
+     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'}.
+     * <br/>
      * Each config item has this pattern:
      * <br/>
      * {@code <tableDefinition>=<columnDefinition>[;<columnDefinition>[...]]}
@@ -455,7 +468,7 @@ public class SapConfiguration extends AbstractConfiguration {
         }
 
         for (String def : subTables) {
-            SubTableMetadata metadata = SubTableMetadata.parseConfig(def);
+            SubTableMetadata metadata = SubTableMetadata.parseConfig(def, isReadTableMode());
 
             subTablesMetadata.computeIfAbsent(metadata.getRootTableName(), a -> new ArrayList<>()).add(metadata);
         }
