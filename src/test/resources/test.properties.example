@@ -4,6 +4,17 @@
 # values. "test.properties" is git-ignored on purpose - it holds credentials and must NOT be committed.
 # When "test.properties" is absent, SapReadTableLiveTest is skipped automatically.
 
+# --- midPoint endpoint (SapResourceLiveTest only) ---
+# SapResourceLiveTest drives a running midPoint server (the docker/ test rig) over REST instead of the
+# connector directly. These default to the docker rig; override only if your midPoint differs. The test
+# is skipped automatically when midPoint is unreachable or the template resource is missing.
+#midpoint.url=http://localhost:11080/midpoint
+#midpoint.user=administrator
+#midpoint.password=T3stPw890uio
+# OID of the abstract resource template deployed by docker/deploy-connector.sh (the test resources
+# inherit it for the connection settings).
+#midpoint.templateOid=f698ab61-55f4-4eec-bba4-81da4b9f52d8
+
 # --- connection ---
 host=sap.example.com
 systemNumber=00
