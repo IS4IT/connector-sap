@@ -195,6 +195,13 @@ public class SapConfiguration extends AbstractConfiguration {
      * above is the same as
      * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'}.
      * <br/>
+     * The WHERE may also reference a root-table field as {@code <rootTableName>.<field>}; it is replaced
+     * with that field's value from the current root row before the sub-query runs. This expresses the join
+     * directly and, unlike a MATCH column, works across fields with different names in the two tables (SAP
+     * often names the same logical content differently, e.g. VALIDFROM vs BEGDA or PERNR vs OBJID), e.g.
+     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=TEXT WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'E' AND LINE = '00000'}
+     * or {@code HRP1001 for HRP1000 ... =STEXT WHERE OBJID = HRP1000.PERNR}.
+     * <br/>
      * Each config item has this pattern:
      * <br/>
      * {@code <tableDefinition>=<columnDefinition>[;<columnDefinition>[...]]}

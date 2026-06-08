@@ -18,6 +18,9 @@ package com.evolveum.polygon.connector.sap;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -84,6 +87,37 @@ public class SapSubTableParsingTest {
         assertEquals(TableColumnDefinition.Mode.OUTPUT, column(m, "TEXT").getMode());
         // the '=' inside the WHERE must not have split the definition
         assertEquals(2, m.getColumns().size());
+    }
+
+    @Test
+    public void whereCanReferenceRootFieldsForTheJoin() {
+        SubTableMetadata m = SubTableMetadata.parseConfig(
+                "AGR_TEXTS for AGR_DEFINE as Descr=TEXT WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'D'",
+                true);
+        assertEquals(Set.of("AGR_NAME"), m.getRootFieldReferences());
+        assertEquals("AGR_NAME = 'SAP_AUDITOR' AND SPRAS = 'D'",
+                m.resolveWhere(Map.of("AGR_NAME", "SAP_AUDITOR")));
+    }
+
+    @Test
+    public void whereCanJoinDifferentlyNamedFields() {
+        SubTableMetadata m = SubTableMetadata.parseConfig(
+                "HRP1001 for HRP1000 as Roles=STEXT WHERE OBJID = HRP1000.PERNR", true);
+        assertEquals(Set.of("PERNR"), m.getRootFieldReferences());
+        assertEquals("OBJID = '00012345'", m.resolveWhere(Map.of("PERNR", "00012345")));
+    }
+
+    @Test
+    public void rootReferenceValueIsQuotedAndEscaped() {
+        SubTableMetadata m = SubTableMetadata.parseConfig("T for ROOT as X=F WHERE A = ROOT.B", true);
+        assertEquals("A = 'O''Brien'", m.resolveWhere(Map.of("B", "O'Brien")));
+    }
+
+    @Test
+    public void noRootReferenceLeavesWhereUnchanged() {
+        SubTableMetadata m = SubTableMetadata.parseConfig("T for ROOT as X=F:MATCH,G WHERE SPRAS = 'E'", true);
+        assertEquals(Set.of(), m.getRootFieldReferences());
+        assertEquals("SPRAS = 'E'", m.resolveWhere(Map.of()));
     }
 
     @Test

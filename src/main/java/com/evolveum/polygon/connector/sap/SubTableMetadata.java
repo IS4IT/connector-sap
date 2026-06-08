@@ -4,7 +4,10 @@ import org.identityconnectors.framework.common.exceptions.ConfigurationException
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,6 +18,7 @@ public class SubTableMetadata {
     private Format format = SubTableMetadata.Format.XML;
     private final List<TableColumnDefinition> columns = new ArrayList<>();
     private String where;
+    private Pattern rootReferencePattern;
 
     private static final Pattern PATTERN_FOR = Pattern.compile(" for ([^ ]+)");
     private static final Pattern PATTERN_FORMAT = Pattern.compile(" format ([^ ]+)");
@@ -59,6 +63,49 @@ public class SubTableMetadata {
     /** Optional extra WHERE clause for the RFC_READ_TABLE sub-query (null in legacy mode). */
     public String getWhere() {
         return where;
+    }
+
+    /**
+     * Root-table field names referenced in the WHERE as {@code <rootTableName>.<field>}. These have to be
+     * read on the root row so {@link #resolveWhere} can substitute their values.
+     */
+    public Set<String> getRootFieldReferences() {
+        Set<String> fields = new LinkedHashSet<>();
+        if (where != null) {
+            Matcher matcher = rootReferencePattern().matcher(where);
+            while (matcher.find()) {
+                fields.add(matcher.group(1));
+            }
+        }
+        return fields;
+    }
+
+    /**
+     * The WHERE with each {@code <rootTableName>.<field>} reference replaced by the (quoted, escaped) value
+     * of that field in the current root row - so the sub-query can join on fields named differently in the
+     * two tables (e.g. {@code WHERE BEGDA = HRP1001.VALIDFROM}). Returns null when there is no WHERE.
+     */
+    public String resolveWhere(Map<String, String> rootValues) {
+        if (where == null) {
+            return null;
+        }
+        Matcher matcher = rootReferencePattern().matcher(where);
+        StringBuffer resolved = new StringBuffer();
+        while (matcher.find()) {
+            String value = rootValues.getOrDefault(matcher.group(1), "");
+            matcher.appendReplacement(resolved, Matcher.quoteReplacement("'" + value.replace("'", "''") + "'"));
+        }
+        matcher.appendTail(resolved);
+        return resolved.toString();
+    }
+
+    private Pattern rootReferencePattern() {
+        if (rootReferencePattern == null) {
+            // <rootTableName>.<field>, not preceded by another identifier char (so it is a standalone token)
+            rootReferencePattern = Pattern.compile(
+                    "(?<![A-Za-z0-9_/])" + Pattern.quote(rootTableName) + "\\.([A-Za-z0-9_/]+)");
+        }
+        return rootReferencePattern;
     }
 
     private int getTableWidth() {

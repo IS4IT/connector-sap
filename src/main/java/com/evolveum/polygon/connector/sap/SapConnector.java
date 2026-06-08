@@ -806,12 +806,18 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 }
             }
 
-            // sub-tables join on their MATCH columns, so make sure those are fetched on the root row
+            // sub-tables join on their MATCH columns and on any <root>.<field> WHERE references, so make
+            // sure those root fields are fetched on the root row
             List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().getOrDefault(tableName, Collections.emptyList());
             for (SubTableMetadata subTable : subTables) {
                 for (TableColumnDefinition column : subTable.getColumns()) {
                     if (column.getMode() == TableColumnDefinition.Mode.MATCH && !outputFields.contains(column.getColumnName())) {
                         outputFields.add(column.getColumnName());
+                    }
+                }
+                for (String rootField : subTable.getRootFieldReferences()) {
+                    if (!outputFields.contains(rootField)) {
+                        outputFields.add(rootField);
                     }
                 }
             }
@@ -1056,8 +1062,9 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 conditions.add(equalsCondition(column.getColumnName(), column.getFilterConstant()));
             }
         }
-        if (!StringUtil.isBlank(metadata.getWhere())) {
-            conditions.add("( " + metadata.getWhere() + " )");
+        String resolvedWhere = metadata.resolveWhere(rootValues);
+        if (!StringUtil.isBlank(resolvedWhere)) {
+            conditions.add("( " + resolvedWhere + " )");
         }
         String where = String.join(" AND ", conditions);
 
