@@ -38,8 +38,7 @@
 @SAP_CONFIG_PROPERTIES@
         </icfc:configurationProperties>
     </connectorConfiguration>
-    <schema>
-        <generationConstraints/>
-    </schema>
+    <!-- No <schema>/<generationConstraints>: let midPoint generate the full schema so
+         every configured object class (including per-test tables) shows up. -->
     <capabilities/>
 </resource>
