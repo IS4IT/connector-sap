@@ -44,10 +44,47 @@ Note: the macOS JCo (`sapjco3-darwinarm64-*`) used for `mvn test` does **not** w
 Linux container — download the matching Linux build (e.g. `sapjco3-linuxx86_64-*` or
 `-linuxaarch64-*` depending on the Docker VM architecture).
 
+## Resource template (auto-imported from test.properties)
+
+`connector-template.xml` is an **abstract resource template**. `deploy-connector.sh` merges
+`src/test/resources/test.properties` into it and drops the result into
+`$MIDPOINT_HOME/post-initial-objects/`; midPoint imports objects from that directory on
+startup, so the restart at the end of the deploy makes the template appear in the repository.
+
+The merge is generic — **every** key in `test.properties` becomes a `<cfg:KEY>` connector
+configuration property, so the settings live in one place and are not duplicated in the XML:
+
+- keys starting with `test.` are test-harness only and are skipped
+- `r3name` maps to the connector's `systemId` property
+- `password` is emitted as a `clearValue`, which midPoint encrypts on import
+- a value containing `;` is multi-valued and becomes repeated `<cfg:KEY>` elements
+  (e.g. `tables`, `tableParameterNames`)
+- a generated property replaces the same-named default in the template; extra keys are appended
+- all values are XML-escaped, so `WHERE` clauses containing `<`, `>` or `&` are safe
+
+The `<cfg:…>` entries in the template (`useNativeNames`, `trace`, `traceLevel`, `tracePath`,
+`baseAccountQuery`, `testBapiFunctionPermission`) are rig defaults; set the same key in
+`test.properties` to override any of them. If a required connection key (`host`,
+`systemNumber`, `r3name`, `client`, `user`, `password`) is missing, the template step is
+skipped with a warning and the rest of the deploy proceeds.
+
+The template has a fixed OID, so concrete test resources can inherit its connection config:
+
+```xml
+<resource oid="...">
+    <name>my-sap-test</name>
+    <super><resourceRef oid="f698ab61-55f4-4eec-bba4-81da4b9f52d8"/></super>
+</resource>
+```
+
+If the template OID already exists in the repository, a re-import may be skipped, so after
+changing `test.properties` either delete the resource template in midPoint and run the deploy
+again, or `down -v` for a clean slate.
+
 ## How deployment works
 
 Connector bundles and JCo are not bind-mounted (single-file/sub-dir bind mounts on
 Colima/Docker Desktop on macOS are unreliable). `deploy-connector.sh` instead builds the
 bundle, `docker cp`s it into `$MIDPOINT_HOME/icf-connectors/` (and JCo into
-`$MIDPOINT_HOME/lib/`), and restarts `mp_server`. After a restart, create/refresh
-the SAP resource in midPoint to pick up the connector.
+`$MIDPOINT_HOME/lib/`), renders + stages the resource template (see above), and restarts
+`mp_server`. After the restart the connector is discovered and the template imported.
