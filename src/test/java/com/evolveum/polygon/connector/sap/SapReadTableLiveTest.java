@@ -103,13 +103,12 @@ public class SapReadTableLiveTest {
             connector.init(config);
 
             Schema schema = connector.schema();
-            for (String alias : config.getTableAliases().values()) {
+            for (String alias : config.getTableNames().keySet()) {
                 assertNotNull(schema.findObjectClassInfo(alias),
                         tableReadFunction + ": schema is missing object class for table alias '" + alias + "'");
             }
 
-            for (String tableName : config.getTableAliases().keySet()) {
-                String alias = config.getTableAliases().get(tableName);
+            for (String alias : config.getTableNames().keySet()) {
                 ObjectClass objectClass = new ObjectClass(alias);
 
                 List<ConnectorObject> all = new ArrayList<>();

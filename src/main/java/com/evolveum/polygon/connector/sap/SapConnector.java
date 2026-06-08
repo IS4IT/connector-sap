@@ -393,11 +393,12 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     private void buildTableObjectClasses(SchemaBuilder builder) {
         for (Map.Entry<String, Map<String, Integer>> table : configuration.getTableMetadatas().entrySet()) {
-            String tableName = table.getKey();
+            String alias = table.getKey();
+            String tableName = configuration.getTableNames().get(alias);
             Map<String, Integer> columnsMetadata = table.getValue();
 
             ObjectClassInfoBuilder objClassBuilder = new ObjectClassInfoBuilder();
-            objClassBuilder.setType(configuration.getTableAliases().get(tableName));
+            objClassBuilder.setType(alias);
 
             for (Map.Entry<String, Integer> column : columnsMetadata.entrySet()) {
                 String columnName = column.getKey();
@@ -423,11 +424,12 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     }
 
     private void buildReadTableObjectClasses(SchemaBuilder builder) {
-        for (String tableName : configuration.getTableAliases().keySet()) {
+        for (String alias : configuration.getTableNames().keySet()) {
+            String tableName = configuration.getTableNames().get(alias);
             ObjectClassInfoBuilder objClassBuilder = new ObjectClassInfoBuilder();
-            objClassBuilder.setType(configuration.getTableAliases().get(tableName));
+            objClassBuilder.setType(alias);
 
-            List<String> ignores = configuration.getTableIgnores().getOrDefault(tableName, Collections.emptyList());
+            List<String> ignores = configuration.getTableIgnores().getOrDefault(alias, Collections.emptyList());
             try {
                 ReadTableStructure structure = loadTableStructure(tableName);
                 for (ReadTableStructure.Field field : structure.getFields()) {
@@ -572,15 +574,14 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
         } else {
             String found = null;
-            for (String tableName : configuration.getTableAliases().keySet()) {
-                String tableAlias = configuration.getTableAliases().get(tableName);
-                if (objectClass.is(tableAlias)) {
-                    found = tableName;
+            for (String alias : configuration.getTableNames().keySet()) {
+                if (objectClass.is(alias)) {
+                    found = alias;
                 }
             }
 
             if (found == null) {
-                throw new UnsupportedOperationException("Unsupported object class " + objectClass + ", expected one of: " + configuration.getTableAliases().values());
+                throw new UnsupportedOperationException("Unsupported object class " + objectClass + ", expected one of: " + configuration.getTableNames().keySet());
             }
 
             if (configuration.isReadTableMode()) {
@@ -639,7 +640,8 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         }
     }
 
-    private void executeTableQuery(String tableName, SapFilter query, ResultsHandler handler) {
+    private void executeTableQuery(String alias, SapFilter query, ResultsHandler handler) {
+        String tableName = configuration.getTableNames().get(alias);
         int numRows = 0;
         boolean isFindByKey = query != null && query.getBasicByNameEquals() != null;
 
@@ -679,7 +681,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
                     Map<String, String> rootValues = new LinkedHashMap<>();
 
-                    for (Map.Entry<String, Integer> entry : configuration.getTableMetadatas().get(tableName).entrySet()) {
+                    for (Map.Entry<String, Integer> entry : configuration.getTableMetadatas().get(alias).entrySet()) {
                         String column = entry.getKey();
                         Integer length = entry.getValue();
 
@@ -689,10 +691,10 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                         rootValues.put(column, columnValue);
 
                         // ignore columns, what is selected as :IGNORE
-                        if (!configuration.getTableIgnores().get(tableName).contains(column)) {
+                        if (!configuration.getTableIgnores().get(alias).contains(column)) {
                             addAttr(builder, column, columnValue);
                         }
-                        if (configuration.getTableKeys().get(tableName).contains(column)) {
+                        if (configuration.getTableKeys().get(alias).contains(column)) {
                             keys.add(columnValue);
                         }
 
@@ -719,7 +721,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                     builder.setUid(concatenatedKey.toString());
                     builder.setName(concatenatedKey.toString());
 
-                    ObjectClass objectClass = new ObjectClass(configuration.getTableAliases().get(tableName));
+                    ObjectClass objectClass = new ObjectClass(alias);
                     builder.setObjectClass(objectClass);
 
                     if (query != null &&
@@ -770,12 +772,13 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     // RFC_READ_TABLE / BBP_RFC_READ_TABLE code path (configuration.tableReadFunction != RFC_GET_TABLE_ENTRIES)
     // ---------------------------------------------------------------------------------------------
 
-    private void executeReadTableQuery(String tableName, SapFilter query, ResultsHandler handler) {
+    private void executeReadTableQuery(String alias, SapFilter query, ResultsHandler handler) {
+        String tableName = configuration.getTableNames().get(alias);
         boolean isFindByKey = query != null && query.getBasicByNameEquals() != null;
         try {
-            List<String> keyColumns = resolveKeyColumns(tableName);
+            List<String> keyColumns = resolveKeyColumns(alias);
             ReadTableStructure structure = loadTableStructure(tableName);
-            List<String> ignores = configuration.getTableIgnores().getOrDefault(tableName, Collections.emptyList());
+            List<String> ignores = configuration.getTableIgnores().getOrDefault(alias, Collections.emptyList());
 
             // output = all columns except MANDT and :IGNORE columns, plus the key columns
             List<String> outputFields = new ArrayList<>();
@@ -792,10 +795,10 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 }
             }
 
-            String where = buildWhere(tableName, keyColumns, query);
+            String where = buildWhere(alias, keyColumns, query);
             List<Map<String, String>> rows = readTableData(tableName, outputFields, where);
 
-            ObjectClass objectClass = new ObjectClass(configuration.getTableAliases().get(tableName));
+            ObjectClass objectClass = new ObjectClass(alias);
             boolean shouldContinue = true;
             int handledObjects = 0;
             for (Map<String, String> row : rows) {
@@ -946,8 +949,8 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         }
     }
 
-    private String buildWhere(String tableName, List<String> keyColumns, SapFilter query) {
-        String configWhere = configuration.getTableWhere().get(tableName);
+    private String buildWhere(String alias, List<String> keyColumns, SapFilter query) {
+        String configWhere = configuration.getTableWhere().get(alias);
         String filterWhere = null;
         if (query != null && query.getBasicByNameEquals() != null && keyColumns.size() == 1) {
             filterWhere = keyColumns.get(0) + " = '" + query.getBasicByNameEquals().replace("'", "''") + "'";
@@ -962,11 +965,12 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     }
 
     /** Key columns: a {@code :KEY} override from the configuration, else the DDIC primary key (MANDT dropped). */
-    private List<String> resolveKeyColumns(String tableName) throws JCoException {
-        List<String> override = configuration.getTableKeys().get(tableName);
+    private List<String> resolveKeyColumns(String alias) throws JCoException {
+        List<String> override = configuration.getTableKeys().get(alias);
         if (override != null && !override.isEmpty()) {
             return override;
         }
+        String tableName = configuration.getTableNames().get(alias);
         List<String> ddicKeys = readDdicKeys(tableName);
         if (ddicKeys.isEmpty()) {
             throw new ConfigurationException("Cannot determine key columns for table " + tableName

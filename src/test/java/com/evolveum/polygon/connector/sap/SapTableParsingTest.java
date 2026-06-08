@@ -16,6 +16,7 @@
 
 package com.evolveum.polygon.connector.sap;
 
+import org.identityconnectors.framework.common.exceptions.ConfigurationException;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -25,11 +26,15 @@ import java.util.LinkedHashSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for the lenient RFC_READ_TABLE table-definition parser. These do not require a SAP
  * connection - they exercise {@link SapConfiguration#parseReadTableDefinitions()} directly.
+ * <p>
+ * The configuration maps are keyed by the ALIAS (object class), with {@link SapConfiguration#getTableNames()}
+ * mapping each alias to its SAP table - so the same SAP table can back several object classes.
  */
 public class SapTableParsingTest {
 
@@ -62,7 +67,7 @@ public class SapTableParsingTest {
     @Test
     public void testBareTableName() {
         SapConfiguration config = parse("AGR_DEFINE");
-        assertEquals("AGR_DEFINE", config.getTableAliases().get("AGR_DEFINE"), "alias defaults to table name");
+        assertEquals("AGR_DEFINE", config.getTableNames().get("AGR_DEFINE"), "alias defaults to table name");
         assertEquals(Collections.emptyList(), config.getTableKeys().get("AGR_DEFINE"), "no key override -> DDIC keys");
         assertEquals(Collections.emptyList(), config.getTableIgnores().get("AGR_DEFINE"));
         assertNull(config.getTableWhere().get("AGR_DEFINE"));
@@ -71,18 +76,18 @@ public class SapTableParsingTest {
     @Test
     public void testAliasOnly() {
         SapConfiguration config = parse("AGR_DEFINE as ACTIVITYGROUP");
-        assertEquals("ACTIVITYGROUP", config.getTableAliases().get("AGR_DEFINE"));
-        assertEquals(Collections.emptyList(), config.getTableKeys().get("AGR_DEFINE"));
+        assertEquals("AGR_DEFINE", config.getTableNames().get("ACTIVITYGROUP"), "alias maps to its SAP table");
+        assertEquals(Collections.emptyList(), config.getTableKeys().get("ACTIVITYGROUP"));
     }
 
     @Test
     public void testLegacyLineStillParses() {
         SapConfiguration config = parse("AGR_DEFINE as ACTIVITYGROUP=MANDT:3:IGNORE,AGR_NAME:30:KEY,PARENT_AGR:30");
-        assertEquals("ACTIVITYGROUP", config.getTableAliases().get("AGR_DEFINE"));
-        assertEquals(Collections.singletonList("AGR_NAME"), config.getTableKeys().get("AGR_DEFINE"),
+        assertEquals("AGR_DEFINE", config.getTableNames().get("ACTIVITYGROUP"));
+        assertEquals(Collections.singletonList("AGR_NAME"), config.getTableKeys().get("ACTIVITYGROUP"),
                 ":KEY becomes a key override, lengths are ignored");
-        assertEquals(Collections.singletonList("MANDT"), config.getTableIgnores().get("AGR_DEFINE"));
-        assertNull(config.getTableWhere().get("AGR_DEFINE"));
+        assertEquals(Collections.singletonList("MANDT"), config.getTableIgnores().get("ACTIVITYGROUP"));
+        assertNull(config.getTableWhere().get("ACTIVITYGROUP"));
     }
 
     @Test
@@ -94,10 +99,10 @@ public class SapTableParsingTest {
     @Test
     public void testWhereClauseWithEqualsSign() {
         SapConfiguration config = parse("AGR_DEFINE as ACTIVITYGROUP WHERE PARENT_AGR <> '' AND SPRAS = 'E'");
-        assertEquals("ACTIVITYGROUP", config.getTableAliases().get("AGR_DEFINE"), "WHERE must not break alias parsing");
-        assertEquals("PARENT_AGR <> '' AND SPRAS = 'E'", config.getTableWhere().get("AGR_DEFINE"),
+        assertEquals("AGR_DEFINE", config.getTableNames().get("ACTIVITYGROUP"), "WHERE must not break alias parsing");
+        assertEquals("PARENT_AGR <> '' AND SPRAS = 'E'", config.getTableWhere().get("ACTIVITYGROUP"),
                 "the '=' inside the clause must stay in the WHERE, not split the table definition");
-        assertEquals(Collections.emptyList(), config.getTableKeys().get("AGR_DEFINE"));
+        assertEquals(Collections.emptyList(), config.getTableKeys().get("ACTIVITYGROUP"));
     }
 
     @Test
@@ -110,13 +115,34 @@ public class SapTableParsingTest {
     @Test
     public void testLowerCaseWhereKeyword() {
         SapConfiguration config = parse("AGR_DEFINE as ACTIVITYGROUP where PARENT_AGR <> ''");
-        assertEquals("PARENT_AGR <> ''", config.getTableWhere().get("AGR_DEFINE"));
+        assertEquals("PARENT_AGR <> ''", config.getTableWhere().get("ACTIVITYGROUP"));
     }
 
     @Test
     public void testMultipleTables() {
         SapConfiguration config = parse("AGR_DEFINE as ACTIVITYGROUP", "USGRP as GROUP=USERGROUP:KEY");
-        assertEquals(new LinkedHashSet<>(Arrays.asList("AGR_DEFINE", "USGRP")), config.getTableAliases().keySet());
-        assertEquals(Collections.singletonList("USERGROUP"), config.getTableKeys().get("USGRP"));
+        assertEquals(new LinkedHashSet<>(Arrays.asList("ACTIVITYGROUP", "GROUP")), config.getTableNames().keySet());
+        assertEquals(Collections.singletonList("USERGROUP"), config.getTableKeys().get("GROUP"));
+    }
+
+    @Test
+    public void testSameTableMultipleAliases() {
+        SapConfiguration config = parse(
+                "AGR_DEFINE as ACTIVITYGROUP",
+                "AGR_DEFINE as AUDITROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR%'");
+        // both aliases exist as distinct object classes, both backed by the same SAP table
+        assertEquals(new LinkedHashSet<>(Arrays.asList("ACTIVITYGROUP", "AUDITROLES")), config.getTableNames().keySet());
+        assertEquals("AGR_DEFINE", config.getTableNames().get("ACTIVITYGROUP"));
+        assertEquals("AGR_DEFINE", config.getTableNames().get("AUDITROLES"));
+        // and each keeps its own WHERE clause
+        assertNull(config.getTableWhere().get("ACTIVITYGROUP"));
+        assertEquals("AGR_NAME LIKE 'SAP_AUDITOR%'", config.getTableWhere().get("AUDITROLES"));
+    }
+
+    @Test
+    public void testDuplicateAliasRejected() {
+        assertThrows(ConfigurationException.class,
+                () -> parse("AGR_DEFINE as ROLES", "USGRP as ROLES"),
+                "two definitions sharing one alias (object class) must be rejected");
     }
 }

@@ -249,30 +249,33 @@ public class SapConfiguration extends AbstractConfiguration {
      */
     private String[] readOnlyParams = {};
 
+    // The maps below are keyed by ALIAS (the object class), not by SAP table name, so the same SAP table
+    // can back several object types (e.g. AGR_DEFINE as ACTIVITYGROUP and AGR_DEFINE as AUDITROLES with
+    // different WHERE clauses). The underlying SAP table for an alias is in tableNames.
     /**
-     * which SAP table which columns and which length has
+     * per object class (alias): its columns and their length (legacy RFC_GET_TABLE_ENTRIES mode)
      */
     private Map<String, Map<String, Integer>> tableMetadatas = new LinkedHashMap<String, Map<String, Integer>>();
     /**
-     * which columns are in which SAP table keys
+     * per object class (alias): which columns are the key
      */
     private Map<String, List<String>> tableKeys = new LinkedHashMap<String, List<String>>();
     /**
-     * which columns are ignored
+     * per object class (alias): which columns are ignored
      */
     private Map<String, List<String>> tableIgnores = new LinkedHashMap<String, List<String>>();
     /**
-     * SAP table name to midPoint objectClass mapping
+     * midPoint objectClass (alias) to SAP table name mapping
      */
-    private Map<String, String> tableAliases = new LinkedHashMap<String, String>();
+    private Map<String, String> tableNames = new LinkedHashMap<String, String>();
 
     /**
-     * optional WHERE clause per SAP table name, passed as RFC_READ_TABLE OPTIONS (RFC_READ_TABLE mode only)
+     * optional WHERE clause per object class (alias), passed as RFC_READ_TABLE OPTIONS (RFC_READ_TABLE mode only)
      */
     private Map<String, String> tableWhere = new LinkedHashMap<String, String>();
 
     /**
-     * Extra tables, that should be fetched for each table row.
+     * Extra tables, that should be fetched for each table row. Keyed by the root SAP table name.
      */
     private Map<String, List<SubTableMetadata>> subTablesMetadata = new LinkedHashMap<>();
 
@@ -418,12 +421,21 @@ public class SapConfiguration extends AbstractConfiguration {
                     throw new ConfigurationException("please select at least one column as a KEY for example: 'AGR_NAME:30:KEY'");
                 }
 
-                tableMetadatas.put(tableName, tableMetadata);
-                tableKeys.put(tableName, keys);
-                tableIgnores.put(tableName, ignore);
-                tableAliases.put(tableName, tableAlias);
+                registerObjectType(tableAlias, tableName);
+                tableMetadatas.put(tableAlias, tableMetadata);
+                tableKeys.put(tableAlias, keys);
+                tableIgnores.put(tableAlias, ignore);
             }
         }
+    }
+
+    /** Registers an alias -&gt; SAP table mapping, rejecting a duplicate alias (it would shadow an object class). */
+    private void registerObjectType(String alias, String tableName) {
+        if (tableNames.containsKey(alias)) {
+            throw new ConfigurationException("duplicate object type alias '" + alias
+                    + "' in the 'tables' configuration; each alias (object class) must be unique");
+        }
+        tableNames.put(alias, tableName);
     }
 
     void parseSubTableDefinitions() {
@@ -512,11 +524,11 @@ public class SapConfiguration extends AbstractConfiguration {
                 }
             }
 
-            tableAliases.put(tableName, tableAlias);
-            tableKeys.put(tableName, keys);
-            tableIgnores.put(tableName, ignore);
+            registerObjectType(tableAlias, tableName);
+            tableKeys.put(tableAlias, keys);
+            tableIgnores.put(tableAlias, ignore);
             if (where != null && !where.isEmpty()) {
-                tableWhere.put(tableName, where);
+                tableWhere.put(tableAlias, where);
             }
             // tableMetadatas is intentionally left empty in this mode; columns/lengths are read from SAP
         }
@@ -562,7 +574,7 @@ public class SapConfiguration extends AbstractConfiguration {
                 ", tableMetadatas=" + tableMetadatas +
                 ", tableKeys=" + tableKeys +
                 ", tableIgnores=" + tableIgnores +
-                ", tableAliases=" + tableAliases +
+                ", tableNames=" + tableNames +
                 ", tableReadFunction='" + tableReadFunction + '\'' +
                 ", tableWhere=" + tableWhere +
                 ", hideIndirectActivitygroups=" + hideIndirectActivitygroups +
@@ -1073,8 +1085,8 @@ public class SapConfiguration extends AbstractConfiguration {
         return tableIgnores;
     }
 
-    public Map<String, String> getTableAliases() {
-        return tableAliases;
+    public Map<String, String> getTableNames() {
+        return tableNames;
     }
 
     public Map<String, String> getTableWhere() {
