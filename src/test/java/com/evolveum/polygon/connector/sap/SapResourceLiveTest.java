@@ -235,6 +235,35 @@ public class SapResourceLiveTest {
         }
     }
 
+    /**
+     * A sub-table can express its join through the WHERE clause by referencing a root field as
+     * {@code <rootTable>.<field>} (which also allows joining differently-named fields). Here AGR_TEXTS is
+     * joined with {@code WHERE AGR_NAME = AGR_DEFINE.AGR_NAME} instead of an AGR_NAME:MATCH column.
+     */
+    @Test
+    public void subTableCanJoinThroughWhereRootReference() throws Exception {
+        assumeTrue(rigAvailable, "midPoint test rig not available - skipping");
+
+        String config =
+                "            <cfg:tables>"
+                        + xmlText("AGR_DEFINE as AUDITADMINROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR_ADMIN%'")
+                        + "</cfg:tables>\n"
+                + "            <cfg:subTables>"
+                        + xmlText("AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=TEXT "
+                                + "WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'D' AND LINE = '00000'")
+                        + "</cfg:subTables>\n";
+        String oid = createResourceWithConfig("zz-test-sap-subtable-ref", config);
+        testResource(oid);
+
+        List<String> descriptions = searchAttributeValues(oid, "ri:CustomAUDITADMINROLESObjectClass", "ShortDescription");
+        LOG.info("WHERE-ref sub-table ShortDescriptions={0}", descriptions.size());
+        assertFalse(descriptions.isEmpty(),
+                "the <root>.<field> WHERE join returned no ShortDescription - the substitution did not match");
+        for (String description : descriptions) {
+            assertFalse(description.isBlank(), "ShortDescription from the WHERE-ref sub-table should not be blank");
+        }
+    }
+
     // --- resource lifecycle helpers --------------------------------------------------------------
 
     /**
