@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2026 IS4IT -->
+
 # Test rig: SAP connector in a real midPoint server (Docker Compose)
 
 Spins up a midPoint server backed by PostgreSQL 17 so the SAP ConnId connector can be
