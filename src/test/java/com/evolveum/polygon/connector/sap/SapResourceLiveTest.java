@@ -17,7 +17,6 @@
 package com.evolveum.polygon.connector.sap;
 
 import org.identityconnectors.common.logging.Log;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
@@ -64,6 +63,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * When midPoint is not reachable or the template is missing the tests are skipped (JUnit assumptions),
  * so the suite stays green without the rig.
  * <p>
+ * Cleanup is done at the START of a run, not the end: {@code @BeforeAll} purges resources left by a
+ * previous run (those named with {@link #RESOURCE_NAME_PREFIX}). The resources a run creates are left in
+ * midPoint afterwards, so you can inspect and test them manually in the GUI; the next run removes them. For
+ * a fully pristine midPoint (also wiping the connector/template), recreate the rig - see {@code docker/README.md}.
+ * <p>
  * The midPoint endpoint and credentials default to the docker rig and can be overridden in
  * {@code test.properties}: {@code midpoint.url}, {@code midpoint.user}, {@code midpoint.password},
  * {@code midpoint.templateOid}.
@@ -82,13 +86,15 @@ public class SapResourceLiveTest {
 
     private static final String DEFAULT_TEMPLATE_OID = "f698ab61-55f4-4eec-bba4-81da4b9f52d8";
 
+    /** Resources created by these tests share this name prefix so they can be purged before a re-run. */
+    private static final String RESOURCE_NAME_PREFIX = "zz-test-sap-";
+
+    private static final HttpClient HTTP = HttpClient.newHttpClient();
+
     private static String restUrl;       // .../midpoint/ws/rest
     private static String authHeader;    // Basic ...
     private static String templateOid;
     private static boolean rigAvailable;
-
-    private final HttpClient http = HttpClient.newHttpClient();
-    private final List<String> createdResourceOids = new ArrayList<>();
 
     @BeforeAll
     static void setUp() {
@@ -106,22 +112,11 @@ public class SapResourceLiveTest {
         if (!rigAvailable) {
             LOG.info("midPoint at {0} not reachable or template {1} missing - midPoint resource tests will be skipped",
                     restUrl, templateOid);
+            return;
         }
-    }
-
-    @AfterEach
-    void deleteCreatedResources() {
-        for (String oid : createdResourceOids) {
-            try {
-                HttpResponse<String> r = send("DELETE", "/resources/" + oid, null, null);
-                if (r.statusCode() != 204 && r.statusCode() != 200) {
-                    LOG.warn("cleanup: deleting resource {0} returned HTTP {1}", oid, r.statusCode());
-                }
-            } catch (Exception e) {
-                LOG.warn("cleanup: failed to delete resource {0}: {1}", oid, e);
-            }
-        }
-        createdResourceOids.clear();
+        // Clean up resources from a PREVIOUS run now, at the start. We deliberately do NOT delete them
+        // afterwards, so the resources this run creates stay in midPoint for manual inspection/testing.
+        purgeTestResources();
     }
 
     /**
@@ -268,7 +263,7 @@ public class SapResourceLiveTest {
 
     /**
      * Creates a concrete resource that inherits the template (connection + defaults) and adds the given
-     * {@code tables} definitions. Returns the new OID and registers it for cleanup.
+     * {@code tables} definitions. Returns the new OID.
      */
     private String createTemplateBasedResource(String name, String... tablesDefs) throws Exception {
         StringBuilder cfg = new StringBuilder();
@@ -278,11 +273,15 @@ public class SapResourceLiveTest {
         return createResourceWithConfig(name, cfg.toString());
     }
 
-    /** Creates a concrete resource inheriting the template, with the given raw {@code <cfg:...>} body. */
+    /**
+     * Creates a concrete resource inheriting the template, with the given raw {@code <cfg:...>} body. The
+     * resource keeps a stable name (so it is easy to find in the GUI afterwards) and is left in midPoint
+     * after the run; the next run purges it by its {@link #RESOURCE_NAME_PREFIX} name.
+     */
     private String createResourceWithConfig(String name, String configProperties) throws Exception {
         String oid = UUID.randomUUID().toString();
         String body = "<resource xmlns=\"" + NS_COMMON + "\" xmlns:c=\"" + NS_COMMON + "\" oid=\"" + oid + "\">\n"
-                + "    <name>" + xmlText(name + "-" + oid.substring(0, 8)) + "</name>\n"
+                + "    <name>" + xmlText(name) + "</name>\n"
                 + "    <super><resourceRef oid=\"" + templateOid + "\"/></super>\n"
                 + "    <connectorConfiguration xmlns:icfc=\"" + NS_ICFC + "\">\n"
                 + "        <icfc:configurationProperties xmlns:cfg=\"" + NS_CFG + "\">\n"
@@ -293,7 +292,6 @@ public class SapResourceLiveTest {
 
         HttpResponse<String> r = send("POST", "/resources", body, "application/xml");
         assertEquals(201, r.statusCode(), "creating resource failed: HTTP " + r.statusCode() + " - " + r.body());
-        createdResourceOids.add(oid);
         return oid;
     }
 
@@ -357,19 +355,41 @@ public class SapResourceLiveTest {
 
     private static boolean templateResourcePresent() {
         try {
-            HttpResponse<String> r = HttpClient.newHttpClient().send(
-                    HttpRequest.newBuilder(URI.create(restUrl + "/resources/" + templateOid))
-                            .header("Authorization", authHeader)
-                            .header("Accept", "application/xml")
-                            .GET().build(),
-                    HttpResponse.BodyHandlers.ofString());
-            return r.statusCode() == 200;
+            return send("GET", "/resources/" + templateOid, null, null).statusCode() == 200;
         } catch (Exception e) {
             return false;
         }
     }
 
-    private HttpResponse<String> send(String method, String path, String body, String contentType) throws Exception {
+    /**
+     * Deletes resources created by a previous run (those named with {@link #RESOURCE_NAME_PREFIX}), leaving
+     * the template and anything else untouched. Best-effort: failures are logged, not fatal.
+     */
+    private static void purgeTestResources() {
+        try {
+            HttpResponse<String> r = send("POST", "/resources/search", "<query xmlns=\"" + NS_QUERY + "\"/>", "application/xml");
+            if (r.statusCode() != 200) {
+                LOG.warn("purge: listing resources returned HTTP {0} - skipping pre-run cleanup", r.statusCode());
+                return;
+            }
+            NodeList resources = xpathNodes(parse(r.body()), "//*[local-name()='object'][@oid]");
+            for (int i = 0; i < resources.getLength(); i++) {
+                org.w3c.dom.Node node = resources.item(i);
+                String oid = node.getAttributes().getNamedItem("oid").getNodeValue();
+                NodeList nameNodes = (NodeList) XPathFactory.newInstance().newXPath()
+                        .evaluate("./*[local-name()='name']/text()", node, XPathConstants.NODESET);
+                String name = nameNodes.getLength() > 0 ? nameNodes.item(0).getNodeValue() : "";
+                if (name.startsWith(RESOURCE_NAME_PREFIX)) {
+                    HttpResponse<String> d = send("DELETE", "/resources/" + oid, null, null);
+                    LOG.info("purge: deleted leftover test resource {0} ({1}) -> HTTP {2}", name, oid, d.statusCode());
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("purge: pre-run cleanup failed: {0}", e);
+        }
+    }
+
+    private static HttpResponse<String> send(String method, String path, String body, String contentType) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(restUrl + path))
                 .header("Authorization", authHeader)
                 .header("Accept", "application/xml");
@@ -379,7 +399,7 @@ public class SapResourceLiveTest {
             b.header("Content-Type", contentType)
                     .method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         }
-        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+        return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private static Document parse(String xml) throws Exception {
