@@ -213,7 +213,7 @@ public class SapResourceLiveTest {
                         + xmlText("AGR_DEFINE as AUDITADMINROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR_ADMIN%'")
                         + "</cfg:tables>\n"
                 + "            <cfg:subTables>"
-                        + xmlText("AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription="
+                        + xmlText("AGR_TEXTS for AUDITADMINROLES format TSV as ShortDescription="
                                 + "AGR_NAME:MATCH,SPRAS(\"D\"):IGNORE,LINE(\"00000\"):IGNORE,TEXT")
                         + "</cfg:subTables>\n";
         String oid = createResourceWithConfig("zz-test-sap-subtable", config);
@@ -238,7 +238,7 @@ public class SapResourceLiveTest {
     /**
      * A sub-table can express its join through the WHERE clause by referencing a root field as
      * {@code <rootTable>.<field>} (which also allows joining differently-named fields). Here AGR_TEXTS is
-     * joined with {@code WHERE AGR_NAME = AGR_DEFINE.AGR_NAME} instead of an AGR_NAME:MATCH column.
+     * joined with {@code WHERE AGR_NAME = AUDITADMINROLES.AGR_NAME} instead of an AGR_NAME:MATCH column.
      */
     @Test
     public void subTableCanJoinThroughWhereRootReference() throws Exception {
@@ -249,8 +249,8 @@ public class SapResourceLiveTest {
                         + xmlText("AGR_DEFINE as AUDITADMINROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR_ADMIN%'")
                         + "</cfg:tables>\n"
                 + "            <cfg:subTables>"
-                        + xmlText("AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=TEXT "
-                                + "WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'D' AND LINE = '00000'")
+                        + xmlText("AGR_TEXTS for AUDITADMINROLES format TSV as ShortDescription=TEXT "
+                                + "WHERE AGR_NAME = AUDITADMINROLES.AGR_NAME AND SPRAS = 'D' AND LINE = '00000'")
                         + "</cfg:subTables>\n";
         String oid = createResourceWithConfig("zz-test-sap-subtable-ref", config);
         testResource(oid);
