@@ -81,6 +81,32 @@ If the template OID already exists in the repository, a re-import may be skipped
 changing `test.properties` either delete the resource template in midPoint and run the deploy
 again, or `down -v` for a clean slate.
 
+## Live tests (`SapResourceLiveTest`)
+
+`mvn test` runs `SapResourceLiveTest`, which drives this rig over REST: each test creates one
+concrete resource (inheriting the template) named `zz-test-sap-*` and asserts schema/query
+behaviour. Cleanup happens at the **start** of a run, not the end — a run purges the
+`zz-test-sap-*` resources left by the previous run and then **leaves its own**, so after `mvn test`
+you can inspect and test them in the GUI. They are removed on the next run. The deployed template
+(`SAPUM-J11`) and everything else are left untouched.
+
+The tests need the rig running with the connector + JCo + template deployed (run `up -d` then
+`deploy-connector.sh` once); when midPoint is unreachable they are skipped, so `mvn test` stays
+green without the rig.
+
+For a fully pristine midPoint — also wiping the repository DB, the deployed connector, JCo and the
+template — do a full reset (the connector and template are stored in the volumes, so they must be
+re-deployed afterwards):
+
+```bash
+docker compose -f docker/docker-compose.yml down -v
+docker compose -f docker/docker-compose.yml up -d
+docker/deploy-connector.sh
+```
+
+The per-run `zz-test-sap-*` purge already gives the tests a clean slate, so this full reset is only
+needed when you want a pristine DB, not for normal test runs.
+
 ## How deployment works
 
 Connector bundles and JCo are not bind-mounted (single-file/sub-dir bind mounts on
