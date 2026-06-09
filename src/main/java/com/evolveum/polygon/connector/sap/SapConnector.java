@@ -198,7 +198,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         
         baseAccountQuery = this.configuration.parseBaseAccountQuery();
 
-        if (this.configuration.SNC_MODE_ON.equals(this.configuration.getSncMode())) {
+        if (SapConfiguration.SNC_MODE_ON.equals(this.configuration.getSncMode())) {
             createDestinationDataFile(destinationName, props);
         }
 
@@ -381,6 +381,20 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 objClassBuilder.addAttributeInfo(attributeActivityGroupIds.build());
             }
         }
+
+        // PROTOTYPE (ConnId 1.6): expose activity-group membership as a native object reference to the
+        // ACTIVITYGROUP object class, so midPoint renders it as an association rather than a string attribute.
+        if (configuration.getTableNames().containsKey("ACTIVITYGROUP")) {
+            AttributeInfoBuilder agRef = new AttributeInfoBuilder("activityGroupRef", ConnectorObjectReference.class);
+            agRef.setReferencedObjectClassName("ACTIVITYGROUP");
+            agRef.setRoleInReference(AttributeInfo.RoleInReference.SUBJECT.toString());
+            agRef.setMultiValued(true);
+            agRef.setCreateable(false);
+            agRef.setUpdateable(false);
+            agRef.setReturnedByDefault(true);   // PROTOTYPE: return by default so the value is easy to inspect
+            objClassBuilder.addAttributeInfo(agRef.build());
+        }
+
         // user_login_infos
         if (this.configuration.getAlsoReadLoginInfo()) {
             boolean readOnly = true;
@@ -1481,6 +1495,15 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             if (TABLETYPE_PARAMETER_KEYS.containsKey(tableName)) {
                 String attribute = TABLETYPE_PARAMETER_KEYS.get(tableName);
                 builder.addAttribute(AttributeBuilder.build(tableName + SEPARATOR + TABLETYPE_PARAMETER_KEYS.get(tableName), table.getIds(attribute)));
+            }
+            // PROTOTYPE (ConnId 1.6): activity groups as native references to ACTIVITYGROUP objects
+            if (ACTIVITYGROUPS.equals(tableName) && configuration.getTableNames().containsKey("ACTIVITYGROUP")) {
+                List<ConnectorObjectReference> agRefs = new ArrayList<>();
+                for (String agrName : table.getIds(AGR_NAME)) {
+                    agRefs.add(new ConnectorObjectReference(new ConnectorObjectIdentification(
+                            new ObjectClass("ACTIVITYGROUP"), Set.of(new Name(agrName)))));
+                }
+                builder.addAttribute(AttributeBuilder.build("activityGroupRef", agRefs));
             }
         }
 

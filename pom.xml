@@ -35,6 +35,8 @@
     <properties>
         <connectorPackage>com.evolveum.polygon</connectorPackage>
         <connectorClass>SapConnector</connectorClass>
+        <!-- ConnId 1.6.x: native object references / associations (prototype) -->
+        <connId.version>1.6.0.0</connId.version>
     </properties>
 
     <repositories>
