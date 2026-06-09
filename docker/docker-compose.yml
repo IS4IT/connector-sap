@@ -1,3 +1,5 @@
+# Copyright (c) 2026 IS4IT
+#
 # Test rig for the SAP ConnId connector inside a real midPoint server.
 #
 # Adapted from ../midpoint-lcm/docker/docker-compose.yml (itself from

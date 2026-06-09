@@ -1,4 +1,6 @@
 <!--
+  Copyright (c) 2026 IS4IT
+
   SAP connector resource TEMPLATE for the Docker test rig.
 
   PLACEHOLDER template. docker/deploy-connector.sh merges src/test/resources/test.properties

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 IS4IT
+#
 # Build the SAP connector bundle, copy it (and SAP JCo, if provided) into the
 # running mp_server container, and restart it so the connector is picked up.
 #
