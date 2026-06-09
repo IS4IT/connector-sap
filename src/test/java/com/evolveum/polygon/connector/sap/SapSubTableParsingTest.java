@@ -41,12 +41,12 @@ public class SapSubTableParsingTest {
     @Test
     public void legacyDefinitionStillParsesInReadTableMode() {
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription="
+                "AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription="
                         + "MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1(\"E\"):IGNORE,LINE:5(\"00000\"):IGNORE,TEXT:80",
                 true);
 
         assertEquals("AGR_TEXTS", m.getTableName());
-        assertEquals("AGR_DEFINE", m.getRootTableName());
+        assertEquals("ACTIVITYGROUP", m.getRootAlias(), "the 'for' part is the root object class (alias)");
         assertEquals(SubTableMetadata.Format.TSV, m.getFormat());
         assertEquals("ShortDescription", m.getVirtualColumnName());
         assertNull(m.getWhere());
@@ -62,7 +62,7 @@ public class SapSubTableParsingTest {
     @Test
     public void simplifiedDefinitionWithoutSizesParsesTheSame() {
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription="
+                "AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription="
                         + "AGR_NAME:MATCH,SPRAS(\"E\"):IGNORE,LINE(\"00000\"):IGNORE,TEXT",
                 true);
 
@@ -77,7 +77,7 @@ public class SapSubTableParsingTest {
     @Test
     public void trailingWhereIsSplitOff() {
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "AGR_TEXTS for AGR_DEFINE as Descr=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'",
+                "AGR_TEXTS for ACTIVITYGROUP as Descr=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'",
                 true);
 
         assertEquals("SPRAS = 'E' AND LINE = '00000'", m.getWhere());
@@ -92,7 +92,7 @@ public class SapSubTableParsingTest {
     @Test
     public void whereCanReferenceRootFieldsForTheJoin() {
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "AGR_TEXTS for AGR_DEFINE as Descr=TEXT WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'D'",
+                "AGR_TEXTS for ACTIVITYGROUP as Descr=TEXT WHERE AGR_NAME = ACTIVITYGROUP.AGR_NAME AND SPRAS = 'D'",
                 true);
         assertEquals(Set.of("AGR_NAME"), m.getRootFieldReferences());
         assertEquals("AGR_NAME = 'SAP_AUDITOR' AND SPRAS = 'D'",
@@ -101,8 +101,10 @@ public class SapSubTableParsingTest {
 
     @Test
     public void whereCanJoinDifferentlyNamedFields() {
+        // root HRP1000 as ORGUNITS; join the differently-named OBJID (sub) to PERNR (root)
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "HRP1001 for HRP1000 as Roles=STEXT WHERE OBJID = HRP1000.PERNR", true);
+                "HRP1001 for ORGUNITS as Roles=STEXT WHERE OBJID = ORGUNITS.PERNR", true);
+        assertEquals("ORGUNITS", m.getRootAlias());
         assertEquals(Set.of("PERNR"), m.getRootFieldReferences());
         assertEquals("OBJID = '00012345'", m.resolveWhere(Map.of("PERNR", "00012345")));
     }
@@ -123,7 +125,7 @@ public class SapSubTableParsingTest {
     @Test
     public void legacyModeKeepsFixedWidthLengths() {
         SubTableMetadata m = SubTableMetadata.parseConfig(
-                "AGR_TEXTS for AGR_DEFINE as Descr=MANDT:3:IGNORE,AGR_NAME:30:MATCH,TEXT:80",
+                "AGR_TEXTS for ACTIVITYGROUP as Descr=MANDT:3:IGNORE,AGR_NAME:30:MATCH,TEXT:80",
                 false);
         // offsets are computed from the lengths in legacy mode (TEXT starts after MANDT(3)+AGR_NAME(30))
         assertEquals(33, column(m, "TEXT").getOffset());

@@ -408,7 +408,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 objClassBuilder.addAttributeInfo(attributeInfoBuilder.build());
             }
 
-            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().get(tableName);
+            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().get(alias);
             if (subTables != null) {
                 for (SubTableMetadata subTable : subTables) {
                     AttributeInfoBuilder attributeInfoBuilder = new AttributeInfoBuilder(subTable.getVirtualColumnName());
@@ -446,7 +446,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                         + configuration.getTableReadFunction() + ": " + e.getMessage(), e);
             }
 
-            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().get(tableName);
+            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().get(alias);
             if (subTables != null) {
                 for (SubTableMetadata subTable : subTables) {
                     AttributeInfoBuilder attributeInfoBuilder = new AttributeInfoBuilder(subTable.getVirtualColumnName());
@@ -742,8 +742,8 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                         continue;
                     }
 
-                    if (configuration.getSubTablesMetadata().containsKey(tableName)) {
-                        for (SubTableMetadata subTables : configuration.getSubTablesMetadata().get(tableName)) {
+                    if (configuration.getSubTablesMetadata().containsKey(alias)) {
+                        for (SubTableMetadata subTables : configuration.getSubTablesMetadata().get(alias)) {
                             try {
                                 builder.addAttribute(subTables.getVirtualColumnName(),
                                                      executeTableSubQuery(concatenatedKey.toString(), subTables,
@@ -806,9 +806,9 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 }
             }
 
-            // sub-tables join on their MATCH columns and on any <root>.<field> WHERE references, so make
-            // sure those root fields are fetched on the root row
-            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().getOrDefault(tableName, Collections.emptyList());
+            // sub-tables join on their MATCH columns and on any <rootAlias>.<field> WHERE references, so
+            // make sure those root fields are fetched on the root row
+            List<SubTableMetadata> subTables = configuration.getSubTablesMetadata().getOrDefault(alias, Collections.emptyList());
             for (SubTableMetadata subTable : subTables) {
                 for (TableColumnDefinition column : subTable.getColumns()) {
                     if (column.getMode() == TableColumnDefinition.Mode.MATCH && !outputFields.contains(column.getColumnName())) {

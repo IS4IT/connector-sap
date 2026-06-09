@@ -186,4 +186,22 @@ public class SapTableParsingTest {
         assertThrows(ConfigurationException.class, config::validate,
                 "validate() (config verify / test connection) must surface the duplicate alias to the GUI");
     }
+
+    @Test
+    public void testValidateAcceptsSubTableForKnownAlias() {
+        SapConfiguration config = validatable("AGR_DEFINE as ACTIVITYGROUP");
+        config.setSubTables(new String[]{"AGR_TEXTS for ACTIVITYGROUP as Descr=AGR_NAME:MATCH,TEXT"});
+        config.validate();
+        assertEquals(1, config.getSubTablesMetadata().get("ACTIVITYGROUP").size(),
+                "sub-table is attached to its root object class (alias)");
+    }
+
+    @Test
+    public void testValidateRejectsSubTableForUnknownAlias() {
+        SapConfiguration config = validatable("AGR_DEFINE as ACTIVITYGROUP");
+        // 'for AGR_DEFINE' is the SAP table name, not the alias - must be rejected (and surfaced in the GUI)
+        config.setSubTables(new String[]{"AGR_TEXTS for AGR_DEFINE as Descr=AGR_NAME:MATCH,TEXT"});
+        assertThrows(ConfigurationException.class, config::validate,
+                "a sub-table whose 'for' alias is not a defined object class must be rejected");
+    }
 }

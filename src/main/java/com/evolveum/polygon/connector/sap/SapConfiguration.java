@@ -183,31 +183,35 @@ public class SapConfiguration extends AbstractConfiguration {
     /**
      * Defines additional tables, that should be queried for each table result.
      * <br/>
+     * The {@code for <rootAlias>} part references the object class (the "tables" alias), not the SAP table
+     * name, so a sub-table attaches to exactly one object type even when several share a SAP table. With
+     * {@code tables = AGR_DEFINE as ACTIVITYGROUP} the sub-table reads {@code ... for ACTIVITYGROUP ...}.
+     * <br/>
      * In RFC_READ_TABLE mode (see {@code tableReadFunction}) the same definitions are reused, but the
      * fixed-width {@code :<size>} of each column is ignored (data is read by field name, not by offset),
      * so you only need the MATCH and filter columns plus the OUTPUT columns; an optional trailing
      * {@code WHERE <clause>} may be appended for extra filtering. The MATCH columns become a server-side
      * join on the root row value and the {@code ("value")} filter constants become WHERE equalities, e.g.
-     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=AGR_NAME:MATCH,SPRAS("E"):IGNORE,LINE("00000"):IGNORE,TEXT}.
+     * {@code AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription=AGR_NAME:MATCH,SPRAS("E"):IGNORE,LINE("00000"):IGNORE,TEXT}.
      * <br/>
      * Since a {@code ("value")} filter is just a static condition, you can equivalently write it in the
      * trailing WHERE instead, in which case the filtered columns need not be listed at all - the example
      * above is the same as
-     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'}.
+     * {@code AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription=AGR_NAME:MATCH,TEXT WHERE SPRAS = 'E' AND LINE = '00000'}.
      * <br/>
-     * The WHERE may also reference a root-table field as {@code <rootTableName>.<field>}; it is replaced
-     * with that field's value from the current root row before the sub-query runs. This expresses the join
-     * directly and, unlike a MATCH column, works across fields with different names in the two tables (SAP
-     * often names the same logical content differently, e.g. VALIDFROM vs BEGDA or PERNR vs OBJID), e.g.
-     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=TEXT WHERE AGR_NAME = AGR_DEFINE.AGR_NAME AND SPRAS = 'E' AND LINE = '00000'}
-     * or {@code HRP1001 for HRP1000 ... =STEXT WHERE OBJID = HRP1000.PERNR}.
+     * The WHERE may also reference a root field as {@code <rootAlias>.<field>}; it is replaced with that
+     * field's value from the current root row before the sub-query runs. This expresses the join directly
+     * and, unlike a MATCH column, works across fields with different names in the two tables (SAP often
+     * names the same logical content differently, e.g. VALIDFROM vs BEGDA or PERNR vs OBJID), e.g.
+     * {@code AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription=TEXT WHERE AGR_NAME = ACTIVITYGROUP.AGR_NAME AND SPRAS = 'E' AND LINE = '00000'}
+     * or, for a root {@code HRP1000 as ORGUNITS}, {@code HRP1001 for ORGUNITS ... =STEXT WHERE OBJID = ORGUNITS.PERNR}.
      * <br/>
      * Each config item has this pattern:
      * <br/>
      * {@code <tableDefinition>=<columnDefinition>[;<columnDefinition>[...]]}
      * <br/>
      * The {@code tableDefinition} uses this pattern:
-     * {@code <tableName> for <rootTableName>[ format <formatType>][ as <virtualColumnName>]}
+     * {@code <tableName> for <rootAlias>[ format <formatType>][ as <virtualColumnName>]}
      * <br/>
      * The {@code columnDefinition} uses this pattern:
      * {@code <columnName>:<size>[("<filterValue>")][:<syncMode>]}
@@ -216,7 +220,8 @@ public class SapConfiguration extends AbstractConfiguration {
      * These restrictions apply for the table definition:
      * <ul>
      *     <li>{@code tableName}: name of a SAP table</li>
-     *     <li>{@code rootTableName}: name of a SAP table, that is defined by the "tables" configuration</li>
+     *     <li>{@code rootAlias}: the object class (the alias from the "tables" configuration) whose objects
+     *         this sub-table is attached to</li>
      *     <li>{@code formatType}:
      *         <ul>
      *             <li>{@code XML} (default if unset; each column name will be returned as individual XML tag)</li>
@@ -234,14 +239,14 @@ public class SapConfiguration extends AbstractConfiguration {
      *         <ul>
      *             <li>{@code OUTPUT} (default if unset; will include the column in the result)</li>
      *             <li>{@code IGNORE} (will ignore the column)</li>
-     *             <li>{@code MATCH} (value has to match with identically named column in the root result; This should be specified for the key column because of prefix-matching issues in the BAPI call)</li>
+     *             <li>{@code MATCH} (value has to match with the identically named column in the root result; This should be specified for the key column because of prefix-matching issues in the BAPI call. To join on a differently named root field, reference it in the WHERE as {@code <rootAlias>.<field>} instead - RFC_READ_TABLE only)</li>
      *         </ul>
      *     </li>
      * </ul>
      * <br/>
      * This is an example to load the short description of an ActivityGroup:
      * <br/>
-     * {@code AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1("E"):IGNORE,LINE:5("00000"):IGNORE,TEXT:80}
+     * {@code AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription=MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1("E"):IGNORE,LINE:5("00000"):IGNORE,TEXT:80}
      * <br/>
      * This queries the row with language "E" (english) and line number "00000" of AGR_TEXTS, selects the TEXT column
      * and returns it as ConnId attribute "ShortDescription" (by SAP convention, the line 0 represents the short description
@@ -250,12 +255,12 @@ public class SapConfiguration extends AbstractConfiguration {
      * <br/>
      * This is an example to load the names of all single roles, that are referenced by a composite role:
      * <br/>
-     * {@code AGR_AGRS for AGR_DEFINE format TSV=MANDT:3:IGNORE,AGR_NAME:30:MATCH,CHILD_AGR:30,ATTRIBUTES:10:IGNORE}
+     * {@code AGR_AGRS for ACTIVITYGROUP format TSV=MANDT:3:IGNORE,AGR_NAME:30:MATCH,CHILD_AGR:30,ATTRIBUTES:10:IGNORE}
      * <br/>
      * <br/>
      * This is an example to load all role flags as XML (role flags include for example the value COLL_AGR="X" for composite roles):
      * <br/>
-     * {@code AGR_FLAGS for AGR_DEFINE format XML=MANDT:3:IGNORE,AGR_NAME:30:MATCH,FLAG_TYPE:10,MISC:52:IGNORE,FLAG_VALUE:32}
+     * {@code AGR_FLAGS for ACTIVITYGROUP format XML=MANDT:3:IGNORE,AGR_NAME:30:MATCH,FLAG_TYPE:10,MISC:52:IGNORE,FLAG_VALUE:32}
      */
     private String[] subTables = {};
 
@@ -474,10 +479,17 @@ public class SapConfiguration extends AbstractConfiguration {
             subTables = new String[0];
         }
 
+        // runs after parseTableDefinitions()/parseReadTableDefinitions() in validate(), so tableNames
+        // (alias -> SAP table) is populated and the root alias can be checked
         for (String def : subTables) {
             SubTableMetadata metadata = SubTableMetadata.parseConfig(def, isReadTableMode());
 
-            subTablesMetadata.computeIfAbsent(metadata.getRootTableName(), a -> new ArrayList<>()).add(metadata);
+            if (!tableNames.containsKey(metadata.getRootAlias())) {
+                throw new ConfigurationException("sub-table '" + def + "' refers to root object class '"
+                        + metadata.getRootAlias() + "' (after 'for'), which is not defined in 'tables'; "
+                        + "use one of " + tableNames.keySet());
+            }
+            subTablesMetadata.computeIfAbsent(metadata.getRootAlias(), a -> new ArrayList<>()).add(metadata);
         }
     }
 

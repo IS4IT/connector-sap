@@ -12,7 +12,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SubTableMetadata {
-    private String rootTableName;
+    private String rootAlias;
     private String tableName;
     private String virtualColumnName;
     private Format format = SubTableMetadata.Format.XML;
@@ -40,8 +40,9 @@ public class SubTableMetadata {
         TSV
     }
 
-    public String getRootTableName() {
-        return rootTableName;
+    /** The object class (alias) of the root objects this sub-table is attached to (the {@code for <alias>} part). */
+    public String getRootAlias() {
+        return rootAlias;
     }
 
     public String getTableName() {
@@ -66,8 +67,8 @@ public class SubTableMetadata {
     }
 
     /**
-     * Root-table field names referenced in the WHERE as {@code <rootTableName>.<field>}. These have to be
-     * read on the root row so {@link #resolveWhere} can substitute their values.
+     * Root field names referenced in the WHERE as {@code <rootAlias>.<field>}. These have to be read on
+     * the root row so {@link #resolveWhere} can substitute their values.
      */
     public Set<String> getRootFieldReferences() {
         Set<String> fields = new LinkedHashSet<>();
@@ -81,9 +82,9 @@ public class SubTableMetadata {
     }
 
     /**
-     * The WHERE with each {@code <rootTableName>.<field>} reference replaced by the (quoted, escaped) value
-     * of that field in the current root row - so the sub-query can join on fields named differently in the
-     * two tables (e.g. {@code WHERE BEGDA = HRP1001.VALIDFROM}). Returns null when there is no WHERE.
+     * The WHERE with each {@code <rootAlias>.<field>} reference replaced by the (quoted, escaped) value of
+     * that field in the current root row - so the sub-query can join on fields named differently in the
+     * two tables (e.g. {@code WHERE BEGDA = ROLES.VALIDFROM}). Returns null when there is no WHERE.
      */
     public String resolveWhere(Map<String, String> rootValues) {
         if (where == null) {
@@ -101,9 +102,9 @@ public class SubTableMetadata {
 
     private Pattern rootReferencePattern() {
         if (rootReferencePattern == null) {
-            // <rootTableName>.<field>, not preceded by another identifier char (so it is a standalone token)
+            // <rootAlias>.<field>, not preceded by another identifier char (so it is a standalone token)
             rootReferencePattern = Pattern.compile(
-                    "(?<![A-Za-z0-9_/])" + Pattern.quote(rootTableName) + "\\.([A-Za-z0-9_/]+)");
+                    "(?<![A-Za-z0-9_/])" + Pattern.quote(rootAlias) + "\\.([A-Za-z0-9_/]+)");
         }
         return rootReferencePattern;
     }
@@ -132,7 +133,7 @@ public class SubTableMetadata {
         String[] definitionParts = def.split("=", 2);
         if (definitionParts.length != 2) {
             throw new ConfigurationException(
-                    "Please use correct sub-table definition, for example: 'AGR_TEXTS for AGR_DEFINE format TSV as ShortDescription=MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1(\"E\"):IGNORE,LINE:5(\"00000\"):IGNORE,TEXT:80', got: " +
+                    "Please use correct sub-table definition, for example: 'AGR_TEXTS for ACTIVITYGROUP format TSV as ShortDescription=MANDT:3:IGNORE,AGR_NAME:30:MATCH,SPRAS:1(\"E\"):IGNORE,LINE:5(\"00000\"):IGNORE,TEXT:80', got: " +
                     config);
         }
 
@@ -167,11 +168,11 @@ public class SubTableMetadata {
 
         Matcher rootNameMatcher = PATTERN_FOR.matcher(definitionPart);
         if (rootNameMatcher.find()) {
-            rootTableName = rootNameMatcher.group(1);
+            rootAlias = rootNameMatcher.group(1);
         } else {
             throw new ConfigurationException(
-                    "Please specify a root table name, on which this sub-table depends (example: 'AGR_TEXTS for ARG_DEFINE=...'), got: " +
-                    definitionPart);
+                    "Please specify the root object class (the 'tables' alias) this sub-table depends on " +
+                    "(example: 'AGR_TEXTS for ACTIVITYGROUP=...'), got: " + definitionPart);
         }
 
         Matcher typeMatcher = PATTERN_FORMAT.matcher(definitionPart);
