@@ -22,6 +22,7 @@ import com.sap.conn.jco.ext.DestinationDataProvider;
 import org.identityconnectors.common.logging.Log;
 import org.identityconnectors.common.security.GuardedString;
 import org.identityconnectors.framework.common.exceptions.ConfigurationException;
+import org.identityconnectors.framework.common.objects.ObjectClass;
 import org.identityconnectors.framework.spi.AbstractConfiguration;
 import org.identityconnectors.framework.spi.ConfigurationProperty;
 
@@ -123,6 +124,16 @@ public class SapConfiguration extends AbstractConfiguration {
      * newer ConnId framework support native names instead of icfs:UID & icfs:NAME
      */
     private Boolean useNativeNames = false;
+
+    /**
+     * When true, the connector reports the account object class as "USER" instead of the framework default
+     * __ACCOUNT__. midPoint's legacySchema detection (presence of __ACCOUNT__/__GROUP__) then auto-flips
+     * to false and the generated resource schema uses raw names (ri:USER, ri:GROUP, ri:PROFILE, ri:&lt;alias&gt;)
+     * instead of decorated AccountObjectClass / Custom&lt;X&gt;ObjectClass. Intended for new resources only;
+     * MUST NOT be changed after a resource is in production (would invalidate its schemaHandling and
+     * existing shadows). Default false keeps the legacy behaviour.
+     */
+    private Boolean useNativeClassNames = false;
 
     /**
      * if this is true every activitygroup which is assigned to a accounts will be hidden from the result object
@@ -614,6 +625,7 @@ public class SapConfiguration extends AbstractConfiguration {
                 ", changePasswordAtNextLogon=" + changePasswordAtNextLogon +
                 ", alsoReadLoginInfo=" + alsoReadLoginInfo +
                 ", useNativeNames=" + useNativeNames +
+                ", useNativeClassNames=" + useNativeClassNames +
                 ", tables=" + Arrays.toString(tables) +
                 ", tableParameterNames=" + Arrays.toString(tableParameterNames) +
                 ", tableMetadatas=" + tableMetadatas +
@@ -839,6 +851,26 @@ public class SapConfiguration extends AbstractConfiguration {
 
     public void setUseNativeNames(Boolean useNativeNames) {
         this.useNativeNames = useNativeNames;
+    }
+
+    @ConfigurationProperty(order = 41, displayMessageKey = "sap.config.useNativeClassNames",
+            helpMessageKey = "sap.config.useNativeClassNames.help")
+    public Boolean getUseNativeClassNames() {
+        return useNativeClassNames;
+    }
+
+    public void setUseNativeClassNames(Boolean useNativeClassNames) {
+        this.useNativeClassNames = useNativeClassNames;
+    }
+
+    /**
+     * The ConnId object-class name the connector uses for accounts. Returns {@code "USER"} when
+     * {@link #getUseNativeClassNames()} is true (so midPoint renders the class as {@code ri:USER}), else
+     * the framework's {@code __ACCOUNT__}. Single source of truth for every account-class comparison and
+     * construction in the connector.
+     */
+    public String getAccountClassName() {
+        return Boolean.TRUE.equals(useNativeClassNames) ? "USER" : ObjectClass.ACCOUNT_NAME;
     }
 
     @ConfigurationProperty(order = 21, displayMessageKey = "sap.config.poolCapacity",

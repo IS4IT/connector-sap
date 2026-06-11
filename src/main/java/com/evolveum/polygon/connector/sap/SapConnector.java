@@ -332,6 +332,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     private void buildAccountObjectClass(SchemaBuilder builder) {
         ObjectClassInfoBuilder objClassBuilder = new ObjectClassInfoBuilder();
+        objClassBuilder.setType(configuration.getAccountClassName());
 
         try {
             String function = "BAPI_USER_GET_DETAIL";
@@ -564,7 +565,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public FilterTranslator<SapFilter> createFilterTranslator(ObjectClass objectClass, OperationOptions operationOptions) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {
+        if (objectClass.is(configuration.getAccountClassName())) {
             return new SapAccountFilterTranslator();
         }
         else {
@@ -576,7 +577,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     public void executeQuery(ObjectClass objectClass, SapFilter query, ResultsHandler handler, OperationOptions options) {
         LOG.info("executeQuery: {0}, options: {1}, objectClass: {2}", query, options, objectClass);
 
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {
+        if (objectClass.is(configuration.getAccountClassName())) {
 
             executeAccountQuery(query, handler, options);
 
@@ -1450,6 +1451,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         String userName = function.getImportParameterList().getString(USERNAME);
 
         ConnectorObjectBuilder builder = new ConnectorObjectBuilder();
+        builder.setObjectClass(new ObjectClass(configuration.getAccountClassName()));
         builder.setUid(userName);
         builder.setName(userName);
 
@@ -1591,7 +1593,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public Uid create(ObjectClass objectClass, Set<Attribute> attributes, OperationOptions options) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {    // __ACCOUNT__
+        if (objectClass.is(configuration.getAccountClassName())) {    // __ACCOUNT__
             boolean needRollback = false;
             try {
                 if (configuration.getUseTransaction()) {
@@ -2023,7 +2025,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public void delete(ObjectClass objectClass, Uid uid, OperationOptions operationOptions) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {
+        if (objectClass.is(configuration.getAccountClassName())) {
             try {
                 LOG.info("delete user, Uid: {0}", uid);
 
@@ -2041,7 +2043,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public Uid update(ObjectClass objectClass, Uid uid, Set<Attribute> attributes, OperationOptions operationOptions) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {
+        if (objectClass.is(configuration.getAccountClassName())) {
             boolean needRollback = false;
             try {
                 if (configuration.getUseTransaction()) {
@@ -2303,7 +2305,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public void sync(ObjectClass objectClass, SyncToken syncToken, SyncResultsHandler syncResultsHandler, OperationOptions operationOptions) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {    // __ACCOUNT__
+        if (objectClass.is(configuration.getAccountClassName())) {    // __ACCOUNT__
             try {
                 syncUser(syncToken, syncResultsHandler, operationOptions);
             } catch (Exception e) {
@@ -2406,7 +2408,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     @Override
     public SyncToken getLatestSyncToken(ObjectClass objectClass) {
-        if (objectClass.is(ObjectClass.ACCOUNT_NAME)) {    // __ACCOUNT__
+        if (objectClass.is(configuration.getAccountClassName())) {    // __ACCOUNT__
 
             // Use the SAP server time as the high-water mark so it is directly comparable with the users'
             // server-side MODDATE/MODTIME (no client/server clock or timezone skew). Fall back to the local
