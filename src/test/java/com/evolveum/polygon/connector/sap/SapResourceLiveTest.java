@@ -259,6 +259,39 @@ public class SapResourceLiveTest {
         }
     }
 
+    /**
+     * When {@code useNativeClassNames=true} the connector reports the account class as {@code "USER"}
+     * instead of the ConnId legacy {@code __ACCOUNT__}. midPoint's {@code detectLegacySchema()} then sees
+     * no legacy types and stops decorating, so the generated schema must use bare names ({@code ri:USER},
+     * {@code ri:GROUP}, {@code ri:PROFILE}, {@code ri:ACTIVITYGROUP}) instead of the legacy
+     * {@code ri:AccountObjectClass} / {@code ri:Custom<X>ObjectClass} forms exercised by the other tests
+     * in this class.
+     */
+    @Test
+    public void useNativeClassNamesProducesUndecoratedSchema() throws Exception {
+        assumeTrue(rigAvailable, "midPoint test rig not available - skipping");
+
+        String config = "            <cfg:useNativeClassNames>true</cfg:useNativeClassNames>\n";
+        String oid = createResourceWithConfig("zz-test-sap-native-class-names", config);
+        testResource(oid);
+
+        Set<String> classes = generatedObjectClasses(oid);
+        LOG.info("useNativeClassNames=true -> object classes: {0}", classes);
+
+        // bare names must be present
+        for (String expected : List.of("USER", "ACTIVITYGROUP", "GROUP", "PROFILE")) {
+            assertTrue(classes.contains(expected),
+                    "expected bare ri:" + expected + " in schema; got: " + classes);
+        }
+        // legacy decorations must be absent
+        assertFalse(classes.contains("AccountObjectClass"),
+                "useNativeClassNames=true must NOT produce AccountObjectClass; got: " + classes);
+        for (String cls : classes) {
+            assertFalse(cls.startsWith("Custom") && cls.endsWith("ObjectClass"),
+                    "useNativeClassNames=true must NOT produce Custom<X>ObjectClass; got: " + classes);
+        }
+    }
+
     // --- resource lifecycle helpers --------------------------------------------------------------
 
     /**
