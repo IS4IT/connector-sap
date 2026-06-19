@@ -58,7 +58,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     private static final String[] BAPI_FUNCTION_LIST = {"BAPI_USER_GETLIST", "BAPI_USER_GET_DETAIL", "BAPI_USER_CREATE1",
             "BAPI_TRANSACTION_COMMIT", "BAPI_TRANSACTION_ROLLBACK", "BAPI_USER_DELETE",
             "BAPI_USER_CHANGE", "BAPI_USER_LOCK", "BAPI_USER_UNLOCK", "BAPI_USER_ACTGROUPS_ASSIGN",
-            "RFC_GET_TABLE_ENTRIES", "SUSR_USER_CHANGE_PASSWORD_RFC", "SUSR_GENERATE_PASSWORD",
+            "SUSR_USER_CHANGE_PASSWORD_RFC", "SUSR_GENERATE_PASSWORD",
             "BAPI_USER_PROFILES_ASSIGN", "BAPI_HELPVALUES_GET",
             "SUSR_LOGIN_CHECK_RFC", "PASSWORD_FORMAL_CHECK",
             "SUSR_GET_ADMIN_USER_LOGIN_INFO", "GET_SYSTEM_TIME_REMOTE"
@@ -290,19 +290,63 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         try {
             this.destination.ping();
             if (configuration.getTestBapiFunctionPermission()) {
-                List<String> notFoundFunctions = new LinkedList<String>();
+
+                // (1) Hardcoded list of BAPIs the connector always (potentially) needs. Conditional
+                // skips: _TRANSACTION_ when useTransaction=false, and SUSR_GET_ADMIN_USER_LOGIN_INFO
+                // when alsoReadLoginInfo=false. Everything else stays in the probe because midPoint
+                // can reach any of these code paths during create/update/delete/password.
+                List<String> notFoundFunctions = new LinkedList<>();
                 for (String function : BAPI_FUNCTION_LIST) {
-                    if (!configuration.getUseTransaction() && function.contains("_TRANSACTION_")) {
+                    if (skipFunctionForCurrentConfig(function)) {
                         continue;
                     }
                     JCoFunction jcoFunc = this.destination.getRepository().getFunction(function);
-                    if (jcoFunc == null)
+                    if (jcoFunc == null) {
                         notFoundFunctions.add(function);
+                    }
                 }
-                if (notFoundFunctions.size() > 0) {
+
+                // (2) The actually-configured table-read FM. Replaces the previously hardcoded
+                // RFC_GET_TABLE_ENTRIES check so a resource that opted into RFC_READ_TABLE /
+                // BBP_RFC_READ_TABLE / a custom Z-FM gets its real FM probed, not the legacy one.
+                String tableReadFn = configuration.getTableReadFunction();
+                if (this.destination.getRepository().getFunction(tableReadFn) == null) {
+                    notFoundFunctions.add(tableReadFn + " (configured tableReadFunction)");
+                }
+
+                if (!notFoundFunctions.isEmpty()) {
                     throw new ConfigurationException("these BAPI functions are not accessible: " + notFoundFunctions);
                 }
-                // testing creation of transaction
+
+                // (3) Probe read access to every SAP table the resource will actually touch:
+                // every <cfg:tables> alias, every <cfg:subTables> entry, and - in RFC_READ_TABLE
+                // mode - DD03L (the data dictionary used for column metadata / key discovery).
+                // Permission failures here surface as a single aggregated ConfigurationException
+                // listing each unreachable table, so a misconfigured resource produces one clear
+                // report rather than failing one search at a time at runtime.
+                List<String> notReadableTables = new LinkedList<>();
+                if (configuration.isReadTableMode()) {
+                    probeTableReadAccessInto(notReadableTables, "DD03L",
+                            "DDIC dictionary, used for schema discovery and key detection");
+                }
+                for (Map.Entry<String, String> entry : configuration.getTableNames().entrySet()) {
+                    probeTableReadAccessInto(notReadableTables, entry.getValue(),
+                            "table alias '" + entry.getKey() + "'");
+                }
+                for (Map.Entry<String, List<SubTableMetadata>> aliasEntry
+                        : configuration.getSubTablesMetadata().entrySet()) {
+                    for (SubTableMetadata sub : aliasEntry.getValue()) {
+                        probeTableReadAccessInto(notReadableTables, sub.getTableName(),
+                                "sub-table of alias '" + aliasEntry.getKey() + "'");
+                    }
+                }
+                if (!notReadableTables.isEmpty()) {
+                    throw new ConfigurationException(
+                            "these SAP tables are not readable by the connector user: "
+                                    + notReadableTables);
+                }
+
+                // (4) Existing transaction-context smoke test.
                 if (configuration.getUseTransaction()) {
                     JCoContext.begin(destination);
                     JCoContext.end(destination);
@@ -310,6 +354,48 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             }
         } catch (JCoException e) {
             throw new ConfigurationException(e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns {@code true} when {@code function} can be skipped in the {@link #test()} probe
+     * because the surrounding feature is turned off in the configuration. Keeps test() readable
+     * and makes new conditional skips easy to add.
+     */
+    private boolean skipFunctionForCurrentConfig(String function) {
+        if (!configuration.getUseTransaction() && function.contains("_TRANSACTION_")) {
+            return true;
+        }
+        if (!configuration.getAlsoReadLoginInfo() && "SUSR_GET_ADMIN_USER_LOGIN_INFO".equals(function)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Probes read access to {@code tableName} using the active table-read path. Uses a
+     * NO_DATA / FIELDS-only call in RFC_READ_TABLE mode (which also validates the table exists)
+     * and a {@code MAX_ENTRIES=1} call in the legacy {@code RFC_GET_TABLE_ENTRIES} path.
+     * Adds a human-readable entry to {@code failures} on error (table missing, no
+     * S_TABU_DIS / S_TABU_NAM, RFC permission denied, ...); the test() driver aggregates them.
+     */
+    private void probeTableReadAccessInto(List<String> failures, String tableName, String role) {
+        try {
+            if (configuration.isReadTableMode()) {
+                // Reuses the connector's existing FIELDS-only call - no rows are fetched, the
+                // server-side cost is the metadata lookup only.
+                loadTableStructure(tableName);
+            } else {
+                JCoFunction function = destination.getRepository().getFunction(SapConfiguration.FN_GET_TABLE_ENTRIES);
+                if (function == null) {
+                    throw new RuntimeException(SapConfiguration.FN_GET_TABLE_ENTRIES + " not found");
+                }
+                function.getImportParameterList().setValue("TABLE_NAME", tableName);
+                function.getImportParameterList().setValue("MAX_ENTRIES", 1);
+                function.execute(destination);
+            }
+        } catch (Exception e) {
+            failures.add(tableName + " (" + role + "): " + e.getMessage());
         }
     }
 

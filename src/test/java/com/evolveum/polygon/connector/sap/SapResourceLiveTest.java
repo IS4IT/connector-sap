@@ -120,6 +120,36 @@ public class SapResourceLiveTest {
     }
 
     /**
+     * Configuring a {@code <cfg:tables>} alias against a SAP table the connector user cannot read
+     * (or that does not exist at all) must cause the resource's test connection to fail with a
+     * clear, human-readable message that names the unreachable table - not a green-light test
+     * connection followed by an error on first search. Exercises the per-table read probe added
+     * to {@code SapConnector#test()} alongside the configured {@code tableReadFunction} check and
+     * the DD03L probe.
+     */
+    @Test
+    public void testConnectionFailsWhenAConfiguredTableIsUnreadable() throws Exception {
+        assumeTrue(rigAvailable, "midPoint test rig not available - skipping");
+
+        // A SAP table that does not exist - the probe must fail and surface that name in the message.
+        String bogusTable = "ZZNONEXISTENT_TBL_FOR_TESTS";
+        String oid = createTemplateBasedResource("zz-test-sap-bad-table",
+                bogusTable + " as BOGUS");
+        java.net.http.HttpResponse<String> r = send("POST", "/resources/" + oid + "/test", null, null);
+        assertEquals(200, r.statusCode(),
+                "resource test should respond with HTTP 200 even when the test result is fatal_error;"
+                        + " HTTP " + r.statusCode() + " body=" + r.body());
+        String status = xpathString(parse(r.body()), "/*/*[local-name()='status'][1]");
+        assertFalse("success".equals(status),
+                "test connection must NOT report success when a configured table is unreadable;"
+                        + " got status=" + status);
+        String body = r.body();
+        assertTrue(body.contains(bogusTable),
+                "test result must mention the unreadable table name '" + bogusTable + "'"
+                        + " in the diagnostic message; got: " + body);
+    }
+
+    /**
      * A table defined as {@code AGR_TEXTS as AUDITROLES WHERE AGR_NAME LIKE 'SAP_AUDITOR%' AND SPRAS = 'D'
      * AND LINE = '00000'} must (a) produce an AUDITROLES object class in the generated resource schema and
      * (b) return only the rows matching that WHERE clause (SAP_AUDITOR* roles, German short-description line).
