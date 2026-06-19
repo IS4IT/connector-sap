@@ -321,23 +321,35 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 // (3) Probe read access to every SAP table the resource will actually touch:
                 // every <cfg:tables> alias, every <cfg:subTables> entry, and - in RFC_READ_TABLE
                 // mode - DD03L (the data dictionary used for column metadata / key discovery).
-                // Permission failures here surface as a single aggregated ConfigurationException
-                // listing each unreachable table, so a misconfigured resource produces one clear
-                // report rather than failing one search at a time at runtime.
+                // In RFC_READ_TABLE mode the per-table WHERE clause is applied so syntax / unknown
+                // column / S_TABU_DIS errors all surface at test time; a WHERE that legitimately
+                // matches zero rows does NOT fail the probe (SAP returns normally with empty
+                // data). Permission failures aggregate into one ConfigurationException listing
+                // each unreachable table, so a misconfigured resource produces one clear report
+                // rather than failing one search at a time at runtime.
                 List<String> notReadableTables = new LinkedList<>();
                 if (configuration.isReadTableMode()) {
                     probeTableReadAccessInto(notReadableTables, "DD03L",
-                            "DDIC dictionary, used for schema discovery and key detection");
+                            "DDIC dictionary, used for schema discovery and key detection", null);
                 }
+                Map<String, String> tableWhereByAlias = configuration.getTableWhere();
                 for (Map.Entry<String, String> entry : configuration.getTableNames().entrySet()) {
+                    String alias = entry.getKey();
                     probeTableReadAccessInto(notReadableTables, entry.getValue(),
-                            "table alias '" + entry.getKey() + "'");
+                            "table alias '" + alias + "'",
+                            tableWhereByAlias.get(alias));
                 }
                 for (Map.Entry<String, List<SubTableMetadata>> aliasEntry
                         : configuration.getSubTablesMetadata().entrySet()) {
                     for (SubTableMetadata sub : aliasEntry.getValue()) {
+                        // A sub-table WHERE that references root-row fields (<rootAlias>.<field>)
+                        // can only be resolved per-row at runtime; we have no root row here, so
+                        // probe without the WHERE in that case - existence + read auth still get
+                        // checked, only the WHERE syntax/columns don't.
+                        String subWhere = sub.getRootFieldReferences().isEmpty() ? sub.getWhere() : null;
                         probeTableReadAccessInto(notReadableTables, sub.getTableName(),
-                                "sub-table of alias '" + aliasEntry.getKey() + "'");
+                                "sub-table of alias '" + aliasEntry.getKey() + "'",
+                                subWhere);
                     }
                 }
                 if (!notReadableTables.isEmpty()) {
@@ -373,18 +385,32 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
     }
 
     /**
-     * Probes read access to {@code tableName} using the active table-read path. Uses a
-     * NO_DATA / FIELDS-only call in RFC_READ_TABLE mode (which also validates the table exists)
-     * and a {@code MAX_ENTRIES=1} call in the legacy {@code RFC_GET_TABLE_ENTRIES} path.
-     * Adds a human-readable entry to {@code failures} on error (table missing, no
-     * S_TABU_DIS / S_TABU_NAM, RFC permission denied, ...); the test() driver aggregates them.
+     * Probes read access to {@code tableName} using the active table-read path. In
+     * {@code RFC_READ_TABLE} mode does a server-side capped one-row read ({@code ROWCOUNT=1},
+     * {@code USE_ET_DATA_4_RETURN=X} when supported) with the optional per-table {@code whereClause}
+     * applied as {@code OPTIONS}; this catches WHERE-syntax errors ({@code OPTION_NOT_VALID}),
+     * unknown columns in the WHERE ({@code FIELD_NOT_VALID}), and table-level
+     * S_TABU_DIS / NOT_AUTHORIZED failures, while a WHERE that legitimately matches zero rows
+     * still succeeds (SAP returns normally with no data, no exception). In the legacy
+     * {@code RFC_GET_TABLE_ENTRIES} path WHERE/OPTIONS is not supported by the FM, so the probe
+     * is a {@code MAX_ENTRIES=1} call and {@code whereClause} is ignored. Adds a human-readable
+     * entry to {@code failures} on error; the test() driver aggregates them.
      */
-    private void probeTableReadAccessInto(List<String> failures, String tableName, String role) {
+    private void probeTableReadAccessInto(List<String> failures, String tableName, String role,
+            String whereClause) {
         try {
             if (configuration.isReadTableMode()) {
-                // Reuses the connector's existing FIELDS-only call - no rows are fetched, the
-                // server-side cost is the metadata lookup only.
-                loadTableStructure(tableName);
+                JCoFunction function = getReadTableFunction();
+                JCoParameterList imports = function.getImportParameterList();
+                imports.setValue("QUERY_TABLE", tableName);
+                imports.setValue("ROWCOUNT", 1);
+                if (imports.getListMetaData().hasField("USE_ET_DATA_4_RETURN")) {
+                    // Avoid DATA_BUFFER_EXCEEDED on wide tables - their row image would otherwise
+                    // overflow the legacy DATA work area at 512 bytes.
+                    imports.setValue("USE_ET_DATA_4_RETURN", "X");
+                }
+                setOptions(function, whereClause);
+                function.execute(destination);
             } else {
                 JCoFunction function = destination.getRepository().getFunction(SapConfiguration.FN_GET_TABLE_ENTRIES);
                 if (function == null) {
