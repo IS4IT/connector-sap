@@ -90,14 +90,14 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- first please install jco to local maven repository, for example:
-            mvn install:install-file -Dfile="pathTo\sapjco3-NTAMD64-3.1.12\sapjco3.jar" -DgroupId=com.sap.conn.jco -DartifactId=sapjco -Dversion=3.1.12 -Dpackaging=jar
+        <!-- SAP JCo is not on Maven Central and must not be bundled (midPoint provides it at runtime),
+             so install it into the local Maven repository once, for example:
+            mvn install:install-file -Dfile="pathTo\sapjco3-NTAMD64-3.1.13\sapjco3.jar" -DgroupId=com.sap.conn.jco -DartifactId=sapjco -Dversion=3.1.13 -Dpackaging=jar
         -->
         <dependency>
             <groupId>com.sap.conn.jco</groupId>
             <artifactId>sapjco</artifactId>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/sapjco3.jar</systemPath>
+            <scope>provided</scope>
             <version>3.1.13</version>
         </dependency>
         <!-- Run the TestNG tests (TestClient) under the JUnit Platform that surefire uses,
