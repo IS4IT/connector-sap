@@ -49,7 +49,8 @@ fi
 
 # The assembly (appendAssemblyId=false) makes target/connector-sap-<version>.jar
 # the bundle, while connector-sap-<version>-bundle.jar would be a secondary one.
-BUNDLE=$(ls -1t "${PROJECT_DIR}"/target/connector-sap-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1)
+# Use -E (extended regex) for the alternation: BSD/macOS grep does not support the GNU \| operator.
+BUNDLE=$(ls -1t "${PROJECT_DIR}"/target/connector-sap-*.jar 2>/dev/null | grep -vE -- '-(sources|javadoc)' | head -1)
 if [[ -z "${BUNDLE}" ]]; then
     echo "ERROR: no built connector bundle found under ${PROJECT_DIR}/target/" >&2
     exit 1
