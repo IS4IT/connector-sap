@@ -140,6 +140,65 @@ public class SapReadTableLiveTest {
         }
     }
 
+    /**
+     * Validates the OPTIONS WHERE splitting against live SAP: a long WHERE (long enough to force the
+     * &gt;72-character wrapping) that contains quoted literals with embedded spaces must reach
+     * RFC_READ_TABLE intact - the wrapping must neither cut a token nor split inside a quoted value.
+     * We discover a real key {@code V} from AGR_DEFINE and run a logically-equivalent but tricky query
+     * <pre>AGR_NAME = 'V' AND AGR_NAME IN ('AA BB', 'CC DD', ... , 'V')</pre>
+     * whose IN-list is long enough to be wrapped and whose entries carry spaces inside quotes. Had the
+     * splitter broken a quote or a token, SAP would raise a syntax error or match the wrong rows;
+     * instead we assert it returns exactly the same single row as the plain {@code AGR_NAME = 'V'} query.
+     */
+    @Test
+    public void whereSplittingPreservesQuotedSpaces() {
+        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
+
+        String tableDef = "AGR_DEFINE as ACTIVITYGROUP"; // RFC_READ_TABLE: key (AGR_NAME) read from DDIC
+
+        List<String> baseline = findUids(tableDef);
+        assumeTrue(!baseline.isEmpty(), "AGR_DEFINE has no readable rows - skipping");
+        String v = baseline.get(0);
+        String vSql = v.replace("'", "''");
+
+        // IN-list of spaced, quoted entries, long enough that the segment exceeds 72 characters and is
+        // wrapped; it ends with the real key so the AND stays satisfiable and the result equals 'V'.
+        StringBuilder inList = new StringBuilder();
+        for (String entry : new String[]{"AA BB", "CC DD", "EE FF", "GG HH", "II JJ", "KK LL", "MM NN"}) {
+            inList.append('\'').append(entry).append("', ");
+        }
+        inList.append('\'').append(vSql).append('\'');
+        String trickyWhere = "AGR_NAME = '" + vSql + "' AND AGR_NAME IN (" + inList + ")";
+        assumeTrue(trickyWhere.length() > 72, "tricky WHERE is not long enough to force OPTIONS wrapping");
+
+        List<String> result = findUids(tableDef + " WHERE " + trickyWhere);
+        assertEquals(List.of(v), result,
+                "a long WHERE with spaced, quoted IN-list entries must return exactly the discovered key '"
+                        + v + "' - the splitter must not cut a token or split inside a quote");
+        LOG.info("WHERE splitting preserved quoted spaces: tricky query returned exactly '{0}'", v);
+    }
+
+    /** find-all over a single RFC_READ_TABLE table definition, returning up to {@link #MAX_ROWS} uids. */
+    private static List<String> findUids(String tableDef) {
+        SapConfiguration config = buildConfiguration(props);
+        config.setTableReadFunction(SapConfiguration.FN_READ_TABLE);
+        config.setTables(new String[]{tableDef});
+
+        SapConnector connector = new SapConnector();
+        List<String> uids = new ArrayList<>();
+        try {
+            connector.init(config);
+            String alias = config.getTableNames().keySet().iterator().next();
+            connector.executeQuery(new ObjectClass(alias), null, co -> {
+                uids.add(co.getUid().getUidValue());
+                return uids.size() < MAX_ROWS;
+            }, new OperationOptionsBuilder().build());
+        } finally {
+            dispose(connector);
+        }
+        return uids;
+    }
+
     private static void dispose(SapConnector connector) {
         try {
             connector.dispose();

@@ -1097,15 +1097,78 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             return;
         }
         JCoTable options = function.getTableParameterList().getTable("OPTIONS");
-        // OPTIONS.TEXT is limited to 72 characters per row; break only at AND/OR boundaries so no
-        // expression, field name or value is split (AND/OR must be upper case).
-        for (String line : whereClause.replaceAll("[\\r\\n]+", " ").split("(?<=\\s(AND|OR)\\s)")) {
-            if (line.trim().isEmpty()) {
+        // OPTIONS.TEXT is CHAR72. Two stages, to stay close to the long-proven behaviour:
+        //   1) break at AND/OR boundaries (AND/OR must be upper case), as before - each logical
+        //      sub-expression keeps its own row, which is what worked reliably in practice;
+        //   2) only a segment that is STILL longer than 72 characters is hard-wrapped, splitting on
+        //      whitespace OUTSIDE quoted literals so no field name, operator or (possibly space-
+        //      containing) quoted value is cut across a row boundary.
+        for (String segment : whereClause.replaceAll("[\\r\\n]+", " ").split("(?<=\\s(AND|OR)\\s)")) {
+            if (segment.trim().isEmpty()) {
                 continue;
             }
-            options.appendRow();
-            options.setValue("TEXT", line);
+            if (segment.length() <= 72) {
+                options.appendRow();
+                options.setValue("TEXT", segment);
+            } else {
+                appendWrapped(options, segment);
+            }
         }
+    }
+
+    /**
+     * Appends {@code text} onto one or more &lt;=72-character OPTIONS rows, splitting only on whitespace
+     * that is OUTSIDE single-quoted literals (via {@link #splitOutsideQuotes}) so no token or
+     * space-containing quoted value is cut across a row boundary. A single token longer than 72
+     * characters cannot be represented and is emitted on its own row (SAP then reports the error).
+     */
+    private void appendWrapped(JCoTable options, String text) {
+        StringBuilder line = new StringBuilder();
+        for (String token : splitOutsideQuotes(text)) {
+            if (line.length() == 0) {
+                line.append(token);
+            } else if (line.length() + 1 + token.length() <= 72) {
+                line.append(' ').append(token);
+            } else {
+                options.appendRow();
+                options.setValue("TEXT", line.toString());
+                line.setLength(0);
+                line.append(token);
+            }
+        }
+        if (line.length() > 0) {
+            options.appendRow();
+            options.setValue("TEXT", line.toString());
+        }
+    }
+
+    /**
+     * Splits {@code where} on whitespace, but treats text inside single quotes as opaque so a quoted
+     * value containing spaces (or an SQL {@code ''} escape) stays in one token. Used to wrap the WHERE
+     * into the 72-character OPTIONS rows without ever cutting a token in half.
+     */
+    private static List<String> splitOutsideQuotes(String where) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuote = false;
+        for (int i = 0; i < where.length(); i++) {
+            char c = where.charAt(i);
+            if (c == '\'') {
+                inQuote = !inQuote; // an '' escape toggles twice -> net inside, which is correct
+                current.append(c);
+            } else if (Character.isWhitespace(c) && !inQuote) {
+                if (current.length() > 0) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) {
+            tokens.add(current.toString());
+        }
+        return tokens;
     }
 
     private String buildWhere(String alias, List<String> keyColumns, SapFilter query) {
