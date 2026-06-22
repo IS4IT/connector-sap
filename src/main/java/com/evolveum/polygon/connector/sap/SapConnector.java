@@ -968,6 +968,12 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 builder.setUid(concatenatedKey.toString());
                 builder.setName(concatenatedKey.toString());
                 for (Map.Entry<String, String> entry : row.entrySet()) {
+                    // columns fetched only for a sub-table join (a MATCH column or a <rootAlias>.<field>
+                    // WHERE reference) may be marked :IGNORE; they must not be emitted as attributes -
+                    // they are deliberately not part of the schema either.
+                    if (ignores.contains(entry.getKey())) {
+                        continue;
+                    }
                     addAttr(builder, entry.getKey(), entry.getValue());
                 }
 
