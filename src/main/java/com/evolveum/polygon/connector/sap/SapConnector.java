@@ -160,6 +160,13 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
 
     private Transformer xmlTransformer;
 
+    // RFC_READ_TABLE metadata caches, populated lazily and kept for the connector instance's lifetime.
+    // A table's DDIC field layout and key columns do not change while the connector is in use, and the
+    // connector pool is flushed when the configuration/schema changes, so this avoids repeating the
+    // NO_DATA structure read and the DD03L key lookup on every search. Cleared in dispose().
+    private final Map<String, ReadTableStructure> tableStructureCache = new HashMap<>();
+    private final Map<String, List<String>> tableKeyCache = new HashMap<>();
+
     @Override
     public Configuration getConfiguration() {
         return configuration;
@@ -282,6 +289,8 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
                 throw new ConnectorIOException(jcoe.getMessage(), jcoe);
             }
         }
+        tableStructureCache.clear();
+        tableKeyCache.clear();
         this.configuration = null;
     }
 
@@ -1018,13 +1027,19 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         return function;
     }
 
-    /** Reads the field layout of a table (all columns) without fetching any data (NO_DATA). */
+    /** Reads the field layout of a table (all columns) without fetching any data (NO_DATA); cached per instance. */
     private ReadTableStructure loadTableStructure(String tableName) throws JCoException {
+        ReadTableStructure cached = tableStructureCache.get(tableName);
+        if (cached != null) {
+            return cached;
+        }
         JCoFunction function = getReadTableFunction();
         function.getImportParameterList().setValue("QUERY_TABLE", tableName);
         function.getImportParameterList().setValue("NO_DATA", "X");
         function.execute(destination);
-        return new ReadTableStructure(function.getTableParameterList().getTable("FIELDS"));
+        ReadTableStructure structure = new ReadTableStructure(function.getTableParameterList().getTable("FIELDS"));
+        tableStructureCache.put(tableName, structure);
+        return structure;
     }
 
     /**
@@ -1186,10 +1201,15 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
         return "( " + configWhere + " ) AND ( " + filterWhere + " )";
     }
 
-    /** Key columns: a {@code :KEY} override from the configuration, else the DDIC primary key (MANDT dropped). */
+    /** Key columns: a {@code :KEY} override from the configuration, else the DDIC primary key (MANDT dropped). Cached per instance. */
     private List<String> resolveKeyColumns(String alias) throws JCoException {
+        List<String> cached = tableKeyCache.get(alias);
+        if (cached != null) {
+            return cached;
+        }
         List<String> override = configuration.getTableKeys().get(alias);
         if (override != null && !override.isEmpty()) {
+            tableKeyCache.put(alias, override);
             return override;
         }
         String tableName = configuration.getTableNames().get(alias);
@@ -1198,6 +1218,7 @@ public class SapConnector implements PoolableConnector, TestOp, SchemaOp, Search
             throw new ConfigurationException("Cannot determine key columns for table " + tableName
                     + " from DDIC (DD03L). Please mark a key column with :KEY in the 'tables' configuration.");
         }
+        tableKeyCache.put(alias, ddicKeys);
         return ddicKeys;
     }
 
