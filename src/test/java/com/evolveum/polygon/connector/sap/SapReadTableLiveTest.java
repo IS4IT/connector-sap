@@ -53,6 +53,8 @@ public class SapReadTableLiveTest {
     private static final int MAX_ROWS = 10;
 
     private static Properties props;
+    /** Set in {@link #loadProps()}: true only when test.properties is present AND SAP is reachable. */
+    private static boolean sapReachable;
 
     /** The two table-read implementations, each with table definitions in the form it expects. */
     static Stream<Arguments> tableReadModes() {
@@ -69,12 +71,16 @@ public class SapReadTableLiveTest {
         props = load(CONFIG_FILE);
         if (props == null) {
             LOG.info("{0} not found on the test classpath - live SAP tests will be skipped", CONFIG_FILE);
+            return;
         }
+        // test.properties being present only means we know HOW to reach SAP, not that SAP is up. Probe it
+        // once so an unreachable SAP skips the tests instead of failing every connection below.
+        sapReachable = SapLiveTestSupport.sapReachable(buildConfiguration(props));
     }
 
     @Test
     public void testConnection() {
-        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
+        assumeTrue(props != null && sapReachable, "live SAP system not available - skipping");
         SapConnector connector = new SapConnector();
         try {
             connector.init(buildConfiguration(props));
@@ -92,7 +98,7 @@ public class SapReadTableLiveTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("tableReadModes")
     public void tableReadWorks(String tableReadFunction, String tables) {
-        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
+        assumeTrue(props != null && sapReachable, "live SAP system not available - skipping");
 
         SapConfiguration config = buildConfiguration(props);
         config.setTableReadFunction(tableReadFunction);
@@ -152,7 +158,7 @@ public class SapReadTableLiveTest {
      */
     @Test
     public void whereSplittingPreservesQuotedSpaces() {
-        assumeTrue(props != null, CONFIG_FILE + " not found - skipping live SAP test");
+        assumeTrue(props != null && sapReachable, "live SAP system not available - skipping");
 
         String tableDef = "AGR_DEFINE as ACTIVITYGROUP"; // RFC_READ_TABLE: key (AGR_NAME) read from DDIC
 

@@ -108,8 +108,12 @@ public class SapResourceLiveTest {
         authHeader = "Basic " + Base64.getEncoder()
                 .encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
 
-        rigAvailable = templateResourcePresent();
-        if (!rigAvailable) {
+        // The template object merely being fetchable proves midPoint is up - it does NOT prove SAP is
+        // reachable. Gate availability in two steps so that an unreachable SAP system skips the live tests
+        // instead of failing every test connection assertion (which would turn a missing environment into a
+        // BUILD FAILURE rather than a handful of skipped tests).
+        if (!templateResourcePresent()) {
+            rigAvailable = false;
             LOG.info("midPoint at {0} not reachable or template {1} missing - midPoint resource tests will be skipped",
                     restUrl, templateOid);
             return;
@@ -117,6 +121,12 @@ public class SapResourceLiveTest {
         // Clean up resources from a PREVIOUS run now, at the start. We deliberately do NOT delete them
         // afterwards, so the resources this run creates stay in midPoint for manual inspection/testing.
         purgeTestResources();
+        // Second step: confirm SAP itself answers through the connector before declaring the rig available.
+        rigAvailable = sapReachableViaTemplate();
+        if (!rigAvailable) {
+            LOG.info("midPoint at {0} is up but SAP is not reachable (template test connection failed) -"
+                    + " midPoint resource tests will be skipped", restUrl);
+        }
     }
 
     /**
@@ -388,6 +398,52 @@ public class SapResourceLiveTest {
             return send("GET", "/resources/" + templateOid, null, null).statusCode() == 200;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    /**
+     * Probes whether SAP itself is reachable through midPoint - not just that midPoint is up. Creates a
+     * throwaway resource that inherits the template (so it carries the full SAP connection config), runs its
+     * test connection, and reports whether that connection succeeded. The probe resource is deleted again
+     * immediately; should the delete fail it keeps the {@link #RESOURCE_NAME_PREFIX} so the next run purges it.
+     * Best-effort: any failure (midPoint refusing the create, SAP unreachable, a malformed result) yields
+     * false, which makes the live tests skip rather than fail.
+     */
+    private static boolean sapReachableViaTemplate() {
+        String oid = UUID.randomUUID().toString();
+        String body = "<resource xmlns=\"" + NS_COMMON + "\" xmlns:c=\"" + NS_COMMON + "\" oid=\"" + oid + "\">\n"
+                + "    <name>" + RESOURCE_NAME_PREFIX + "reachability-probe</name>\n"
+                + "    <super><resourceRef oid=\"" + templateOid + "\"/></super>\n"
+                + "    <connectorConfiguration xmlns:icfc=\"" + NS_ICFC + "\">\n"
+                + "        <icfc:configurationProperties xmlns:cfg=\"" + NS_CFG + "\"/>\n"
+                + "    </connectorConfiguration>\n"
+                + "</resource>\n";
+        try {
+            HttpResponse<String> create = send("POST", "/resources", body, "application/xml");
+            if (create.statusCode() != 201) {
+                LOG.warn("reachability probe: creating probe resource returned HTTP {0} - treating rig as unavailable: {1}",
+                        create.statusCode(), create.body());
+                return false;
+            }
+        } catch (Exception e) {
+            LOG.warn("reachability probe: creating probe resource failed: {0}", e);
+            return false;
+        }
+        try {
+            HttpResponse<String> test = send("POST", "/resources/" + oid + "/test", null, null);
+            if (test.statusCode() != 200) {
+                return false;
+            }
+            return "success".equals(xpathString(parse(test.body()), "/*/*[local-name()='status'][1]"));
+        } catch (Exception e) {
+            LOG.warn("reachability probe: SAP test connection failed: {0}", e);
+            return false;
+        } finally {
+            try {
+                send("DELETE", "/resources/" + oid, null, null);
+            } catch (Exception e) {
+                LOG.warn("reachability probe: deleting probe resource {0} failed (next run will purge it): {1}", oid, e);
+            }
         }
     }
 

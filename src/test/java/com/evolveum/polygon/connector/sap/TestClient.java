@@ -114,6 +114,12 @@ public class TestClient {
         tableParams.add("ADDTEL");
         sapConfiguration.setTableParameterNames(tableParams.toArray(new String[0]));
 
+        // test.properties being present only means we know HOW to reach SAP, not that SAP is up. If SAP is
+        // unreachable, skip the whole class instead of erroring out of every test on the connection attempt.
+        if (!SapLiveTestSupport.sapReachable(sapConfiguration)) {
+            throw new SkipException("SAP system not reachable - skipping live SAP tests");
+        }
+
         sapConnector = new SapConnector();
         sapConnector.init(sapConfiguration);
 
